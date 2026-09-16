@@ -1,0 +1,458 @@
+// The C entry points of libsodium, one novo-lang declaration each.
+//
+// A pointer is an `Int`: every buffer libsodium reads or writes is an
+// address the caller reserved with `ptr.alloc`, and zero is the null
+// pointer.  libsodium passes nothing by value and returns nothing by
+// value, so the whole surface below is expressible.
+//
+// A key, a nonce and a tag are fixed-length byte buffers.  The lengths
+// are `#define`s in the C header and also functions, and only the
+// functions are symbols a binding can resolve, so the `*_bytes`,
+// `*_keybytes`, `*_noncebytes` and `*_macbytes` calls are here and a
+// caller asks them rather than writing a number.
+//
+// Most entry points answer a C `int`: 0 is success and -1 is failure.
+// A verification failure — a forged ciphertext, a bad signature, a
+// wrong password — is the same -1, and it is the only report.
+//
+// The effect rows say where the operating system is touched.  A call
+// that draws from the kernel's random source, or that asks the kernel
+// for a page it will not swap, is `[io, ffi]`.  Everything that only
+// computes over buffers the caller supplied is `[ffi]`.
+
+// Initialise the library.
+//
+// Call this once, before any other entry point, and from one thread.
+// Answers 0 on the first successful call, 1 when the library was
+// already initialised, and -1 when initialisation failed, after which
+// no other entry point may be called.
+pub @ffi(library = "sodium", symbol = "sodium_init")
+fn sodium_init() -> Int [io, ffi]
+
+// Get the version of the library as text.
+//
+// The answer is the address of a static string such as `"1.0.18"`.
+pub @ffi(library = "sodium", symbol = "sodium_version_string")
+fn sodium_version_string() -> Int [ffi]
+
+// Get the major number of the library's binary interface version.
+//
+// This is the SONAME number, not the first part of the version string.
+pub @ffi(library = "sodium", symbol = "sodium_library_version_major")
+fn sodium_library_version_major() -> Int [ffi]
+
+// Get the minor number of the library's binary interface version.
+pub @ffi(library = "sodium", symbol = "sodium_library_version_minor")
+fn sodium_library_version_minor() -> Int [ffi]
+
+// Ask whether this is a minimal build of the library.
+//
+// Answers 1 for a build made with `--enable-minimal`, which leaves out
+// the deprecated and rarely used constructions.  Every entry point in
+// this package is in a minimal build.
+pub @ffi(library = "sodium", symbol = "sodium_library_minimal")
+fn sodium_library_minimal() -> Int [ffi]
+
+// Get an unpredictable 32-bit value.
+//
+// The value is drawn from the operating system's random source and is
+// uniform over the whole 32-bit range.  It arrives as an unsigned
+// number widened to 64 bits, so it is never negative.
+pub @ffi(library = "sodium", symbol = "randombytes_random")
+fn randombytes_random() -> Int [io, ffi]
+
+// Get an unpredictable value below `upper_bound`.
+//
+// The result is uniform over `0 .. upper_bound - 1`, without the bias
+// that taking a remainder introduces.  An `upper_bound` of 0 or 1
+// answers 0.
+pub @ffi(library = "sodium", symbol = "randombytes_uniform")
+fn randombytes_uniform(upper_bound: Int) -> Int [io, ffi]
+
+// Fill `size` bytes at `buf` with unpredictable data.
+//
+// This is the call that generates a nonce or a salt.  It draws from
+// the operating system's random source.
+pub @ffi(library = "sodium", symbol = "randombytes_buf")
+fn randombytes_buf(buf: Int, size: Int) [io, ffi]
+
+// Fill `size` bytes at `buf` with data derived from a seed.
+//
+// `seed` is the address of `randombytes_seedbytes()` bytes.  The same
+// seed always produces the same bytes, so this is for a reproducible
+// test and never for a key.  It touches no random source.
+pub @ffi(library = "sodium", symbol = "randombytes_buf_deterministic")
+fn randombytes_buf_deterministic(buf: Int, size: Int, seed: Int) [ffi]
+
+// Get the length of the seed `randombytes_buf_deterministic` takes.
+pub @ffi(library = "sodium", symbol = "randombytes_seedbytes")
+fn randombytes_seedbytes() -> Int [ffi]
+
+// Overwrite `len` bytes at `pnt` with zeros.
+//
+// The compiler is not allowed to remove this write, which is what
+// separates it from clearing a buffer by hand.  It is how a key leaves
+// memory.
+pub @ffi(library = "sodium", symbol = "sodium_memzero")
+fn sodium_memzero(pnt: Int, len: Int) [ffi]
+
+// Compare `len` bytes at `b1` with `len` bytes at `b2`, in constant
+// time.
+//
+// Answers 0 when the two are equal and -1 when they are not.  The time
+// the comparison takes does not depend on where the first difference
+// is, so it is the only correct way to check a tag or an
+// authenticator.  It reports equality, not order.
+pub @ffi(library = "sodium", symbol = "sodium_memcmp")
+fn sodium_memcmp(b1: Int, b2: Int, len: Int) -> Int [ffi]
+
+// Order `len` bytes at `b1` against `len` bytes at `b2`, in constant
+// time.
+//
+// The bytes are read as one little-endian number.  Answers -1, 0 or 1,
+// and the answer is a C `int`, so write `as i32` before comparing it
+// with -1.
+pub @ffi(library = "sodium", symbol = "sodium_compare")
+fn sodium_compare(b1: Int, b2: Int, len: Int) -> Int [ffi]
+
+// Ask whether `nlen` bytes at `n` are all zero, in constant time.
+//
+// Answers 1 when they are and 0 when they are not.
+pub @ffi(library = "sodium", symbol = "sodium_is_zero")
+fn sodium_is_zero(n: Int, nlen: Int) -> Int [ffi]
+
+// Add one to the `nlen`-byte little-endian number at `n`, in constant
+// time.
+//
+// This is how a nonce advances between messages under one key. The
+// addition wraps at the end of the buffer and carries no error.
+pub @ffi(library = "sodium", symbol = "sodium_increment")
+fn sodium_increment(n: Int, nlen: Int) [ffi]
+
+// Write `bin_len` bytes at `bin` as lower-case hexadecimal text.
+//
+// `hex_maxlen` must be at least `bin_len * 2 + 1`, because the text is
+// terminated with a zero byte.  The conversion is constant-time.
+// Answers the address of `hex`.
+pub @ffi(library = "sodium", symbol = "sodium_bin2hex")
+fn sodium_bin2hex(hex: Int, hex_maxlen: Int, bin: Int, bin_len: Int) -> Int [ffi]
+
+// Read hexadecimal text as bytes.
+//
+// `bin` is a buffer of `bin_maxlen` bytes and `hex` is the text.
+// `ignore` is the address of a zero-terminated string of characters to
+// skip between pairs, such as `": "`, or 0 to allow none.  `bin_len`
+// is the address of an eight-byte slot that receives how many bytes
+// were written, and `hex_end` the address of a slot that receives
+// where parsing stopped; either may be 0.  Answers 0 on success and -1
+// when the text does not fit or is not hexadecimal.
+pub @ffi(library = "sodium", symbol = "sodium_hex2bin")
+fn sodium_hex2bin(bin: Int, bin_maxlen: Int, hex: Str, hex_len: Int, ignore: Int, bin_len: Int,
+                  hex_end: Int) -> Int [ffi]
+
+// Allocate `size` bytes of guarded memory.
+//
+// The block is placed at the end of a page, with an unreadable page
+// after it and a canary before it, and the whole block is locked
+// against being written to swap.  Answers the address, or 0 when the
+// allocation failed.  Release it with `sodium_free` and never with
+// `ptr.free`.
+pub @ffi(library = "sodium", symbol = "sodium_malloc")
+fn sodium_malloc(size: Int) -> Int [io, ffi]
+
+// Release a block `sodium_malloc` returned.
+//
+// The bytes are zeroed before the pages go back, and the canary is
+// checked: a block written past its end terminates the process here
+// rather than returning.  Releasing the null address does nothing.
+pub @ffi(library = "sodium", symbol = "sodium_free")
+fn sodium_free(p: Int) [io, ffi]
+
+// Lock `len` bytes at `addr` into physical memory.
+//
+// Locked pages are not written to swap and are excluded from a core
+// dump.  Answers 0 on success and -1 when the operating system refused,
+// which a per-process limit makes ordinary.
+pub @ffi(library = "sodium", symbol = "sodium_mlock")
+fn sodium_mlock(addr: Int, len: Int) -> Int [io, ffi]
+
+// Unlock `len` bytes at `addr`, zeroing them first.
+//
+// Answers 0 on success and -1 on failure.
+pub @ffi(library = "sodium", symbol = "sodium_munlock")
+fn sodium_munlock(addr: Int, len: Int) -> Int [io, ffi]
+
+// Hash `inlen` bytes at `in` into `outlen` bytes at `out`.
+//
+// This is BLAKE2b.  `outlen` is between `crypto_generichash_bytes_min`
+// and `crypto_generichash_bytes_max`, and the length is part of the
+// hash: a 16-byte digest is not the first 16 bytes of a 32-byte
+// digest.  `key` and `keylen` are a key of up to
+// `crypto_generichash_keybytes()` bytes, which turns the hash into a
+// message authentication code; pass 0 and 0 for an unkeyed hash.
+// Answers 0 on success and -1 on a bad length.
+pub @ffi(library = "sodium", symbol = "crypto_generichash")
+fn crypto_generichash(out: Int, outlen: Int, input: Int, inlen: Int, key: Int,
+                      keylen: Int) -> Int [ffi]
+
+// Begin a hash computed a piece at a time.
+//
+// `state` is the address of a buffer of `crypto_generichash_statebytes()`
+// bytes the caller reserved and keeps until the final call.  `key`,
+// `keylen` and `outlen` are those of `crypto_generichash`, and `outlen`
+// must match the one given to `crypto_generichash_final`.
+pub @ffi(library = "sodium", symbol = "crypto_generichash_init")
+fn crypto_generichash_init(state: Int, key: Int, keylen: Int, outlen: Int) -> Int [ffi]
+
+// Add `inlen` bytes at `in` to a hash in progress.
+//
+// The pieces may be any size, and the digest depends only on the bytes
+// and not on where they were split.
+pub @ffi(library = "sodium", symbol = "crypto_generichash_update")
+fn crypto_generichash_update(state: Int, input: Int, inlen: Int) -> Int [ffi]
+
+// Finish a hash in progress and write `outlen` bytes to `out`.
+//
+// `outlen` must be the length given to `crypto_generichash_init`. The
+// state may not be used again afterwards.
+pub @ffi(library = "sodium", symbol = "crypto_generichash_final")
+fn crypto_generichash_final(state: Int, out: Int, outlen: Int) -> Int [ffi]
+
+// Get the size of the buffer the streaming hash state needs.
+//
+// The state is a structure whose fields have no promised offsets. This
+// call is what a caller reserves, and nothing reads inside it.
+pub @ffi(library = "sodium", symbol = "crypto_generichash_statebytes")
+fn crypto_generichash_statebytes() -> Int [ffi]
+
+// Get the digest length BLAKE2b produces when no other is asked for.
+pub @ffi(library = "sodium", symbol = "crypto_generichash_bytes")
+fn crypto_generichash_bytes() -> Int [ffi]
+
+// Get the key length BLAKE2b uses when no other is asked for.
+pub @ffi(library = "sodium", symbol = "crypto_generichash_keybytes")
+fn crypto_generichash_keybytes() -> Int [ffi]
+
+// Write a random BLAKE2b key of `crypto_generichash_keybytes()` bytes
+// to `k`.
+pub @ffi(library = "sodium", symbol = "crypto_generichash_keygen")
+fn crypto_generichash_keygen(k: Int) [io, ffi]
+
+// Encrypt and authenticate `mlen` bytes at `m` under a shared key.
+//
+// `c` is a buffer of `mlen + crypto_secretbox_macbytes()` bytes: the
+// authentication tag goes in front of the ciphertext.  `n` is a nonce
+// of `crypto_secretbox_noncebytes()` bytes and `k` a key of
+// `crypto_secretbox_keybytes()` bytes.  A nonce may never repeat under
+// one key.  Answers 0.
+pub @ffi(library = "sodium", symbol = "crypto_secretbox_easy")
+fn crypto_secretbox_easy(c: Int, m: Int, mlen: Int, n: Int, k: Int) -> Int [ffi]
+
+// Verify and decrypt `clen` bytes at `c` under a shared key.
+//
+// `m` is a buffer of `clen - crypto_secretbox_macbytes()` bytes.
+// Answers 0 when the tag verifies, and -1 when it does not, which
+// means the message was altered or the key or nonce is wrong.  Nothing
+// in `m` may be used after a -1.
+pub @ffi(library = "sodium", symbol = "crypto_secretbox_open_easy")
+fn crypto_secretbox_open_easy(m: Int, c: Int, clen: Int, n: Int, k: Int) -> Int [ffi]
+
+// Write a random shared key of `crypto_secretbox_keybytes()` bytes
+// to `k`.
+pub @ffi(library = "sodium", symbol = "crypto_secretbox_keygen")
+fn crypto_secretbox_keygen(k: Int) [io, ffi]
+
+// Get the length of a secret-key encryption key.
+pub @ffi(library = "sodium", symbol = "crypto_secretbox_keybytes")
+fn crypto_secretbox_keybytes() -> Int [ffi]
+
+// Get the length of a secret-key encryption nonce.
+pub @ffi(library = "sodium", symbol = "crypto_secretbox_noncebytes")
+fn crypto_secretbox_noncebytes() -> Int [ffi]
+
+// Get the length of the authentication tag a secret box carries.
+pub @ffi(library = "sodium", symbol = "crypto_secretbox_macbytes")
+fn crypto_secretbox_macbytes() -> Int [ffi]
+
+// Encrypt `mlen` bytes at `m` with associated data, under a shared key.
+//
+// This is XChaCha20-Poly1305 with the IETF construction.  `c` is a
+// buffer of `mlen + crypto_aead_xchacha20poly1305_ietf_abytes()` bytes
+// and `clen_p` the address of an eight-byte slot that receives how
+// many were written, or 0.  `ad` and `adlen` are data that is
+// authenticated but not encrypted — a header, a message number — and
+// may be 0 and 0.  `nsec` is unused and must be 0.  `npub` is a
+// 24-byte nonce and `k` a 32-byte key.  Answers 0.
+//
+// The nonce is long enough to choose at random for every message.
+pub @ffi(library = "sodium", symbol = "crypto_aead_xchacha20poly1305_ietf_encrypt")
+fn crypto_aead_xchacha20poly1305_ietf_encrypt(c: Int, clen_p: Int, m: Int, mlen: Int, ad: Int,
+                                              adlen: Int, nsec: Int, npub: Int, k: Int) -> Int [ffi]
+
+// Verify and decrypt `clen` bytes at `c` with associated data.
+//
+// `m` is a buffer of `clen - crypto_aead_xchacha20poly1305_ietf_abytes()`
+// bytes and `mlen_p` the address of a slot that receives how many were
+// written, or 0.  `nsec` is unused and must be 0.  `ad` and `adlen`
+// must be exactly what the encryption was given.  Answers 0 when the
+// tag verifies and -1 when it does not.
+pub @ffi(library = "sodium", symbol = "crypto_aead_xchacha20poly1305_ietf_decrypt")
+fn crypto_aead_xchacha20poly1305_ietf_decrypt(m: Int, mlen_p: Int, nsec: Int, c: Int, clen: Int,
+                                              ad: Int, adlen: Int, npub: Int, k: Int) -> Int [ffi]
+
+// Write a random key for XChaCha20-Poly1305 to `k`.
+pub @ffi(library = "sodium", symbol = "crypto_aead_xchacha20poly1305_ietf_keygen")
+fn crypto_aead_xchacha20poly1305_ietf_keygen(k: Int) [io, ffi]
+
+// Get the length of an XChaCha20-Poly1305 key.
+pub @ffi(library = "sodium", symbol = "crypto_aead_xchacha20poly1305_ietf_keybytes")
+fn crypto_aead_xchacha20poly1305_ietf_keybytes() -> Int [ffi]
+
+// Get the length of an XChaCha20-Poly1305 nonce.
+pub @ffi(library = "sodium", symbol = "crypto_aead_xchacha20poly1305_ietf_npubbytes")
+fn crypto_aead_xchacha20poly1305_ietf_npubbytes() -> Int [ffi]
+
+// Get the number of bytes XChaCha20-Poly1305 adds to a message.
+pub @ffi(library = "sodium", symbol = "crypto_aead_xchacha20poly1305_ietf_abytes")
+fn crypto_aead_xchacha20poly1305_ietf_abytes() -> Int [ffi]
+
+// Generate an X25519 key pair.
+//
+// `pk` is a buffer of `crypto_box_publickeybytes()` bytes and `sk` one
+// of `crypto_box_secretkeybytes()` bytes.  The secret key is drawn
+// from the operating system's random source.  Answers 0.
+pub @ffi(library = "sodium", symbol = "crypto_box_keypair")
+fn crypto_box_keypair(pk: Int, sk: Int) -> Int [io, ffi]
+
+// Encrypt `mlen` bytes at `m` for a recipient, from a sender.
+//
+// `c` is a buffer of `mlen + crypto_box_macbytes()` bytes, `n` a nonce
+// of `crypto_box_noncebytes()` bytes, `pk` the recipient's public key
+// and `sk` the sender's secret key.  The recipient learns that the
+// sender wrote it.  Answers 0, or -1 when the public key is not a
+// valid point.
+pub @ffi(library = "sodium", symbol = "crypto_box_easy")
+fn crypto_box_easy(c: Int, m: Int, mlen: Int, n: Int, pk: Int, sk: Int) -> Int [ffi]
+
+// Verify and decrypt `clen` bytes at `c` from a sender.
+//
+// `pk` is the sender's public key and `sk` the recipient's secret key.
+// Answers 0 when the tag verifies and -1 when it does not.
+pub @ffi(library = "sodium", symbol = "crypto_box_open_easy")
+fn crypto_box_open_easy(m: Int, c: Int, clen: Int, n: Int, pk: Int, sk: Int) -> Int [ffi]
+
+// Encrypt `mlen` bytes at `m` for a recipient, anonymously.
+//
+// `c` is a buffer of `mlen + crypto_box_sealbytes()` bytes and `pk`
+// the recipient's public key.  A fresh key pair is generated for this
+// one message and its secret half is destroyed, so the recipient
+// cannot tell who sent it and the sender cannot decrypt it again.
+// Answers 0.
+pub @ffi(library = "sodium", symbol = "crypto_box_seal")
+fn crypto_box_seal(c: Int, m: Int, mlen: Int, pk: Int) -> Int [io, ffi]
+
+// Verify and decrypt an anonymous message.
+//
+// `m` is a buffer of `clen - crypto_box_sealbytes()` bytes, and both
+// halves of the recipient's key pair are needed.  Answers 0 on success
+// and -1 on failure.
+pub @ffi(library = "sodium", symbol = "crypto_box_seal_open")
+fn crypto_box_seal_open(m: Int, c: Int, clen: Int, pk: Int, sk: Int) -> Int [ffi]
+
+// Get the length of an X25519 public key.
+pub @ffi(library = "sodium", symbol = "crypto_box_publickeybytes")
+fn crypto_box_publickeybytes() -> Int [ffi]
+
+// Get the length of an X25519 secret key.
+pub @ffi(library = "sodium", symbol = "crypto_box_secretkeybytes")
+fn crypto_box_secretkeybytes() -> Int [ffi]
+
+// Get the length of a public-key encryption nonce.
+pub @ffi(library = "sodium", symbol = "crypto_box_noncebytes")
+fn crypto_box_noncebytes() -> Int [ffi]
+
+// Get the length of the authentication tag a box carries.
+pub @ffi(library = "sodium", symbol = "crypto_box_macbytes")
+fn crypto_box_macbytes() -> Int [ffi]
+
+// Get the number of bytes a sealed box adds to a message.
+//
+// It is the ephemeral public key plus the tag.
+pub @ffi(library = "sodium", symbol = "crypto_box_sealbytes")
+fn crypto_box_sealbytes() -> Int [ffi]
+
+// Generate an Ed25519 key pair.
+//
+// `pk` is a buffer of `crypto_sign_publickeybytes()` bytes and `sk` one
+// of `crypto_sign_secretkeybytes()` bytes.  Answers 0.
+pub @ffi(library = "sodium", symbol = "crypto_sign_keypair")
+fn crypto_sign_keypair(pk: Int, sk: Int) -> Int [io, ffi]
+
+// Sign `mlen` bytes at `m`, writing the signature on its own.
+//
+// `sig` is a buffer of `crypto_sign_bytes()` bytes and `siglen_p` the
+// address of an eight-byte slot that receives the signature's length,
+// or 0.  `sk` is the signer's secret key.  Answers 0.
+pub @ffi(library = "sodium", symbol = "crypto_sign_detached")
+fn crypto_sign_detached(sig: Int, siglen_p: Int, m: Int, mlen: Int, sk: Int) -> Int [ffi]
+
+// Verify a signature over `mlen` bytes at `m`.
+//
+// `pk` is the signer's public key.  Answers 0 when the signature is
+// the signer's and -1 when it is not.  This is the only report: a
+// caller that ignores it has verified nothing.
+pub @ffi(library = "sodium", symbol = "crypto_sign_verify_detached")
+fn crypto_sign_verify_detached(sig: Int, m: Int, mlen: Int, pk: Int) -> Int [ffi]
+
+// Get the length of an Ed25519 public key.
+pub @ffi(library = "sodium", symbol = "crypto_sign_publickeybytes")
+fn crypto_sign_publickeybytes() -> Int [ffi]
+
+// Get the length of an Ed25519 secret key.
+//
+// The secret key holds the public key in its second half, so a signer
+// needs to keep only this one buffer.
+pub @ffi(library = "sodium", symbol = "crypto_sign_secretkeybytes")
+fn crypto_sign_secretkeybytes() -> Int [ffi]
+
+// Get the length of an Ed25519 signature.
+pub @ffi(library = "sodium", symbol = "crypto_sign_bytes")
+fn crypto_sign_bytes() -> Int [ffi]
+
+// Hash a password into a storable string.
+//
+// `out` is a buffer of `crypto_pwhash_strbytes()` bytes, which
+// receives zero-terminated text holding the algorithm, the parameters,
+// a random salt and the hash.  `passwd` and `passwdlen` are the
+// password.  `opslimit` and `memlimit` are the work to do and the
+// memory to use; `crypto_pwhash_opslimit_interactive()` and
+// `crypto_pwhash_memlimit_interactive()` are the pair for a password a
+// person types.  Answers 0, or -1 when the memory could not be
+// reserved.
+pub @ffi(library = "sodium", symbol = "crypto_pwhash_str")
+fn crypto_pwhash_str(out: Int, passwd: Str, passwdlen: Int, opslimit: Int,
+                     memlimit: Int) -> Int [io, ffi]
+
+// Check a password against a stored string.
+//
+// `stored` is the address of the text `crypto_pwhash_str` wrote.
+// Answers 0 when the password matches and -1 when it does not.  The
+// parameters come out of the stored string, so a string written with
+// heavier settings is still checkable.
+pub @ffi(library = "sodium", symbol = "crypto_pwhash_str_verify")
+fn crypto_pwhash_str_verify(stored: Int, passwd: Str, passwdlen: Int) -> Int [ffi]
+
+// Get the size of the buffer `crypto_pwhash_str` writes into.
+pub @ffi(library = "sodium", symbol = "crypto_pwhash_strbytes")
+fn crypto_pwhash_strbytes() -> Int [ffi]
+
+// Get the work setting for a password a person types.
+pub @ffi(library = "sodium", symbol = "crypto_pwhash_opslimit_interactive")
+fn crypto_pwhash_opslimit_interactive() -> Int [ffi]
+
+// Get the memory setting for a password a person types.
+//
+// The figure is in bytes, and the call that uses it really does
+// reserve that much.
+pub @ffi(library = "sodium", symbol = "crypto_pwhash_memlimit_interactive")
+fn crypto_pwhash_memlimit_interactive() -> Int [ffi]

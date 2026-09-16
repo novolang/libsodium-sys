@@ -1,0 +1,380 @@
+// API tests for the libsodium bindings.
+//
+// Every test below calls into the C library, so the suite needs
+// libsodium installed and linked.  `novo pkg build` type-checks the
+// declarations without it; `novo test` runs them and does not.
+//
+// libsodium was not installed on the machine these tests were written
+// on, so the suite has never been linked.  Read every assertion as a
+// statement about the documented C API rather than as an observation.
+//
+// Every test works in memory.  The suite reads and writes no file, and
+// it needs no privileges: the one call that can be refused by a limit,
+// `sodium_mlock`, is asserted to answer either way.
+
+use std.test
+use libsodium
+
+// The message every round trip below carries, and its length in bytes.
+const MESSAGE: Str = "the quick brown fox jumps over the lazy dog"
+const MESSAGE_LEN: Int = 43
+
+// A buffer size that is larger than anything this suite needs.
+const ROOM: Int = 256
+
+@test
+fn test_the_library_initialises_and_reports_its_version() [io, ffi]
+    test.case("sodium_init, sodium_version_string and the version numbers")
+    // 0 is the first successful call and 1 is a repeat; only -1 is a
+    // failure, and after it nothing else may be called.
+    let rc = libsodium.sodium_init()
+    test.assert(rc == 0 or rc == 1)
+    test.assert(str.len(ptr.read_str(libsodium.sodium_version_string())) > 0)
+    test.assert(libsodium.sodium_library_version_major() > 0)
+    test.assert(libsodium.sodium_library_version_minor() >= 0)
+    // A full build and a minimal build both answer this package's
+    // entry points; the flag says which one is installed.
+    let minimal = libsodium.sodium_library_minimal()
+    test.assert(minimal == 0 or minimal == 1)
+
+@test
+fn test_the_random_source_answers_bytes_and_a_bounded_number() [io, ffi]
+    test.case("randombytes_random, randombytes_uniform, randombytes_buf and the seeded form")
+    let _ = libsodium.sodium_init()
+    // The 32-bit value arrives unsigned, so it is never negative.
+    test.assert(libsodium.randombytes_random() >= 0)
+    let bounded = libsodium.randombytes_uniform(10)
+    test.assert(bounded >= 0)
+    test.assert(bounded < 10)
+    let seed_len = libsodium.randombytes_seedbytes()
+    test.assert(seed_len == 32)
+    let seed = ptr.alloc(seed_len)
+    libsodium.randombytes_buf(seed, seed_len)
+    // The same seed gives the same bytes, which is what makes this
+    // form reproducible and unfit for a key.
+    let a = ptr.alloc(32)
+    let b = ptr.alloc(32)
+    libsodium.randombytes_buf_deterministic(a, 32, seed)
+    libsodium.randombytes_buf_deterministic(b, 32, seed)
+    test.assert(libsodium.sodium_memcmp(a, b, 32) == 0)
+    ptr.free(b)
+    ptr.free(a)
+    ptr.free(seed)
+
+@test
+fn test_the_constant_time_helpers_agree_with_the_bytes() [io, ffi]
+    test.case("sodium_memzero, sodium_memcmp, sodium_compare, sodium_is_zero, sodium_increment")
+    let _ = libsodium.sodium_init()
+    let a = ptr.alloc(8)
+    let b = ptr.alloc(8)
+    libsodium.sodium_memzero(a, 8)
+    libsodium.sodium_memzero(b, 8)
+    test.assert(libsodium.sodium_is_zero(a, 8) == 1)
+    test.assert(libsodium.sodium_memcmp(a, b, 8) == 0)
+    // The comparison reads the bytes as one little-endian number, and
+    // it answers a C `int`, so the -1 needs the narrowing.
+    libsodium.sodium_increment(b, 8)
+    test.assert(libsodium.sodium_is_zero(b, 8) == 0)
+    test.assert(libsodium.sodium_memcmp(a, b, 8) == -1)
+    test.assert(libsodium.sodium_compare(a, b, 8) as i32 == -1)
+    test.assert(libsodium.sodium_compare(b, a, 8) == 1)
+    ptr.free(b)
+    ptr.free(a)
+
+@test
+fn test_bytes_round_trip_through_hexadecimal() [io, ffi]
+    test.case("sodium_bin2hex and sodium_hex2bin")
+    let _ = libsodium.sodium_init()
+    let bin = ptr.alloc(ROOM)
+    ptr.write_bytes_buf(bin, bytes.from_str(MESSAGE))
+    // The text needs two characters a byte and a zero byte after them.
+    let hex = ptr.alloc(MESSAGE_LEN * 2 + 1)
+    test.assert(libsodium.sodium_bin2hex(hex, MESSAGE_LEN * 2 + 1, bin, MESSAGE_LEN) == hex)
+    let text = ptr.read_str(hex)
+    test.assert(str.len(text) == MESSAGE_LEN * 2)
+    let back = ptr.alloc(ROOM)
+    let written = ptr.alloc_word()
+    // No ignored characters, and no interest in where parsing stopped.
+    test.assert(libsodium.sodium_hex2bin(back, ROOM, text, str.len(text), 0, written, 0) == 0)
+    test.assert(ptr.read_word(written) == MESSAGE_LEN)
+    test.assert(bytes.to_str(ptr.read_bytes_n(back, MESSAGE_LEN)) == MESSAGE)
+    // Text that is not hexadecimal is refused rather than truncated.
+    test.assert(libsodium.sodium_hex2bin(back, ROOM, "zz", 2, 0, written, 0) == -1)
+    ptr.free(written)
+    ptr.free(back)
+    ptr.free(hex)
+    ptr.free(bin)
+
+@test
+fn test_guarded_memory_is_allocated_locked_and_released() [io, ffi]
+    test.case("sodium_malloc, sodium_free, sodium_mlock, sodium_munlock")
+    let _ = libsodium.sodium_init()
+    let guarded = libsodium.sodium_malloc(64)
+    test.assert(guarded != 0)
+    libsodium.sodium_memzero(guarded, 64)
+    test.assert(libsodium.sodium_is_zero(guarded, 64) == 1)
+    // A guarded block is released by the library, never by `ptr.free`.
+    libsodium.sodium_free(guarded)
+    // Releasing the null address does nothing.
+    libsodium.sodium_free(0)
+    // Locking a page is a request the operating system may refuse,
+    // because a process has a limit on how much it may lock.
+    let plain = ptr.alloc(64)
+    if libsodium.sodium_mlock(plain, 64) == 0
+        test.assert(libsodium.sodium_munlock(plain, 64) == 0)
+        // Unlocking zeroes the bytes on the way out.
+        test.assert(libsodium.sodium_is_zero(plain, 64) == 1)
+    else
+        test.assert(libsodium.sodium_munlock(plain, 64) == -1)
+    ptr.free(plain)
+
+@test
+fn test_a_message_hashes_in_one_call_and_a_piece_at_a_time() [io, ffi]
+    test.case("crypto_generichash, its streaming form and its sizes")
+    let _ = libsodium.sodium_init()
+    let outlen = libsodium.crypto_generichash_bytes()
+    test.assert(outlen == 32)
+    let keylen = libsodium.crypto_generichash_keybytes()
+    test.assert(keylen == 32)
+    let key = ptr.alloc(keylen)
+    libsodium.crypto_generichash_keygen(key)
+    let input = ptr.alloc(ROOM)
+    ptr.write_bytes_buf(input, bytes.from_str(MESSAGE))
+
+    let one_shot = ptr.alloc(outlen)
+    test.assert(libsodium.crypto_generichash(one_shot, outlen, input, MESSAGE_LEN,
+                                             key, keylen) == 0)
+    // The state is a buffer whose size the library reports; nothing
+    // reads inside it.
+    let statelen = libsodium.crypto_generichash_statebytes()
+    test.assert(statelen > 0)
+    let state = ptr.alloc(statelen)
+    test.assert(libsodium.crypto_generichash_init(state, key, keylen, outlen) == 0)
+    // The digest depends on the bytes and not on where they were split.
+    test.assert(libsodium.crypto_generichash_update(state, input, 10) == 0)
+    test.assert(libsodium.crypto_generichash_update(state, input + 10, MESSAGE_LEN - 10) == 0)
+    let streamed = ptr.alloc(outlen)
+    test.assert(libsodium.crypto_generichash_final(state, streamed, outlen) == 0)
+    test.assert(libsodium.sodium_memcmp(one_shot, streamed, outlen) == 0)
+
+    // A shorter digest is its own hash, not a prefix of the longer one.
+    let short = ptr.alloc(16)
+    test.assert(libsodium.crypto_generichash(short, 16, input, MESSAGE_LEN, key, keylen) == 0)
+    test.assert(libsodium.sodium_memcmp(short, one_shot, 16) == -1)
+    ptr.free(short)
+    ptr.free(streamed)
+    ptr.free(state)
+    ptr.free(one_shot)
+    ptr.free(input)
+    ptr.free(key)
+
+@test
+fn test_a_secret_box_round_trips_and_a_forgery_is_refused() [io, ffi]
+    test.case("crypto_secretbox_easy, crypto_secretbox_open_easy and the sizes")
+    let _ = libsodium.sodium_init()
+    let keylen = libsodium.crypto_secretbox_keybytes()
+    let noncelen = libsodium.crypto_secretbox_noncebytes()
+    let maclen = libsodium.crypto_secretbox_macbytes()
+    test.assert(keylen == 32)
+    test.assert(noncelen == 24)
+    test.assert(maclen == 16)
+    let key = ptr.alloc(keylen)
+    libsodium.crypto_secretbox_keygen(key)
+    let nonce = ptr.alloc(noncelen)
+    libsodium.randombytes_buf(nonce, noncelen)
+    let m = ptr.alloc(ROOM)
+    ptr.write_bytes_buf(m, bytes.from_str(MESSAGE))
+    // The tag goes in front of the ciphertext, so the box is longer
+    // than the message by exactly the tag.
+    let c = ptr.alloc(MESSAGE_LEN + maclen)
+    test.assert(libsodium.crypto_secretbox_easy(c, m, MESSAGE_LEN, nonce, key) == 0)
+    let back = ptr.alloc(ROOM)
+    test.assert(libsodium.crypto_secretbox_open_easy(back, c, MESSAGE_LEN + maclen,
+                                                     nonce, key) == 0)
+    test.assert(bytes.to_str(ptr.read_bytes_n(back, MESSAGE_LEN)) == MESSAGE)
+    // One altered byte is a forgery, and the only report is the -1.
+    libsodium.sodium_increment(c, 1)
+    test.assert(libsodium.crypto_secretbox_open_easy(back, c, MESSAGE_LEN + maclen,
+                                                     nonce, key) == -1)
+    ptr.free(back)
+    ptr.free(c)
+    ptr.free(m)
+    ptr.free(nonce)
+    ptr.free(key)
+
+@test
+fn test_the_aead_round_trips_with_associated_data() [io, ffi]
+    test.case("crypto_aead_xchacha20poly1305_ietf_encrypt and decrypt")
+    let _ = libsodium.sodium_init()
+    let keylen = libsodium.crypto_aead_xchacha20poly1305_ietf_keybytes()
+    let noncelen = libsodium.crypto_aead_xchacha20poly1305_ietf_npubbytes()
+    let taglen = libsodium.crypto_aead_xchacha20poly1305_ietf_abytes()
+    test.assert(keylen == 32)
+    // The nonce is 24 bytes, which is long enough to choose at random.
+    test.assert(noncelen == 24)
+    test.assert(taglen == 16)
+    let key = ptr.alloc(keylen)
+    libsodium.crypto_aead_xchacha20poly1305_ietf_keygen(key)
+    let nonce = ptr.alloc(noncelen)
+    libsodium.randombytes_buf(nonce, noncelen)
+    let m = ptr.alloc(ROOM)
+    ptr.write_bytes_buf(m, bytes.from_str(MESSAGE))
+    // The associated data is authenticated and not encrypted.
+    let ad = ptr.alloc(8)
+    ptr.write_bytes_buf(ad, bytes.from_str("header01"))
+    let c = ptr.alloc(MESSAGE_LEN + taglen)
+    let clen = ptr.alloc_word()
+    test.assert(libsodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+        c, clen, m, MESSAGE_LEN, ad, 8, 0, nonce, key) == 0)
+    test.assert(ptr.read_word(clen) == MESSAGE_LEN + taglen)
+    let back = ptr.alloc(ROOM)
+    let mlen = ptr.alloc_word()
+    test.assert(libsodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
+        back, mlen, 0, c, MESSAGE_LEN + taglen, ad, 8, nonce, key) == 0)
+    test.assert(ptr.read_word(mlen) == MESSAGE_LEN)
+    test.assert(bytes.to_str(ptr.read_bytes_n(back, MESSAGE_LEN)) == MESSAGE)
+    // Associated data that differs from the encryption's is a failure,
+    // although not a byte of the ciphertext changed.
+    test.assert(libsodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
+        back, mlen, 0, c, MESSAGE_LEN + taglen, ad, 7, nonce, key) == -1)
+    ptr.free(mlen)
+    ptr.free(back)
+    ptr.free(clen)
+    ptr.free(c)
+    ptr.free(ad)
+    ptr.free(m)
+    ptr.free(nonce)
+    ptr.free(key)
+
+@test
+fn test_a_box_round_trips_between_two_key_pairs() [io, ffi]
+    test.case("crypto_box_keypair, crypto_box_easy, crypto_box_open_easy")
+    let _ = libsodium.sodium_init()
+    let pklen = libsodium.crypto_box_publickeybytes()
+    let sklen = libsodium.crypto_box_secretkeybytes()
+    let noncelen = libsodium.crypto_box_noncebytes()
+    let maclen = libsodium.crypto_box_macbytes()
+    test.assert(pklen == 32)
+    test.assert(sklen == 32)
+    test.assert(noncelen == 24)
+    test.assert(maclen == 16)
+    let alice_pk = ptr.alloc(pklen)
+    let alice_sk = ptr.alloc(sklen)
+    let bob_pk = ptr.alloc(pklen)
+    let bob_sk = ptr.alloc(sklen)
+    test.assert(libsodium.crypto_box_keypair(alice_pk, alice_sk) == 0)
+    test.assert(libsodium.crypto_box_keypair(bob_pk, bob_sk) == 0)
+    // Two key pairs drawn from the random source are different.
+    test.assert(libsodium.sodium_memcmp(alice_pk, bob_pk, pklen) == -1)
+    let nonce = ptr.alloc(noncelen)
+    libsodium.randombytes_buf(nonce, noncelen)
+    let m = ptr.alloc(ROOM)
+    ptr.write_bytes_buf(m, bytes.from_str(MESSAGE))
+    let c = ptr.alloc(MESSAGE_LEN + maclen)
+    // Alice writes to Bob with her secret key and his public key.
+    test.assert(libsodium.crypto_box_easy(c, m, MESSAGE_LEN, nonce, bob_pk, alice_sk) == 0)
+    let back = ptr.alloc(ROOM)
+    // Bob reads with his secret key and her public key.
+    test.assert(libsodium.crypto_box_open_easy(back, c, MESSAGE_LEN + maclen, nonce,
+                                               alice_pk, bob_sk) == 0)
+    test.assert(bytes.to_str(ptr.read_bytes_n(back, MESSAGE_LEN)) == MESSAGE)
+    // The wrong sender's public key does not verify.
+    test.assert(libsodium.crypto_box_open_easy(back, c, MESSAGE_LEN + maclen, nonce,
+                                               bob_pk, bob_sk) == -1)
+    ptr.free(back)
+    ptr.free(c)
+    ptr.free(m)
+    ptr.free(nonce)
+    ptr.free(bob_sk)
+    ptr.free(bob_pk)
+    ptr.free(alice_sk)
+    ptr.free(alice_pk)
+
+@test
+fn test_a_sealed_box_hides_its_sender() [io, ffi]
+    test.case("crypto_box_seal, crypto_box_seal_open, crypto_box_sealbytes")
+    let _ = libsodium.sodium_init()
+    let pklen = libsodium.crypto_box_publickeybytes()
+    let sklen = libsodium.crypto_box_secretkeybytes()
+    // The overhead is an ephemeral public key plus a tag.
+    let seallen = libsodium.crypto_box_sealbytes()
+    test.assert(seallen == 48)
+    let pk = ptr.alloc(pklen)
+    let sk = ptr.alloc(sklen)
+    test.assert(libsodium.crypto_box_keypair(pk, sk) == 0)
+    let m = ptr.alloc(ROOM)
+    ptr.write_bytes_buf(m, bytes.from_str(MESSAGE))
+    let c = ptr.alloc(MESSAGE_LEN + seallen)
+    // Sealing needs only the recipient's public key.
+    test.assert(libsodium.crypto_box_seal(c, m, MESSAGE_LEN, pk) == 0)
+    let back = ptr.alloc(ROOM)
+    // Opening needs both halves of the recipient's key pair.
+    test.assert(libsodium.crypto_box_seal_open(back, c, MESSAGE_LEN + seallen, pk, sk) == 0)
+    test.assert(bytes.to_str(ptr.read_bytes_n(back, MESSAGE_LEN)) == MESSAGE)
+    // The same message sealed twice gives two different ciphertexts,
+    // because each sealing generates its own key pair.
+    let c2 = ptr.alloc(MESSAGE_LEN + seallen)
+    test.assert(libsodium.crypto_box_seal(c2, m, MESSAGE_LEN, pk) == 0)
+    test.assert(libsodium.sodium_memcmp(c, c2, MESSAGE_LEN + seallen) == -1)
+    ptr.free(c2)
+    ptr.free(back)
+    ptr.free(c)
+    ptr.free(m)
+    ptr.free(sk)
+    ptr.free(pk)
+
+@test
+fn test_a_signature_verifies_and_a_changed_message_does_not() [io, ffi]
+    test.case("crypto_sign_keypair, crypto_sign_detached, crypto_sign_verify_detached")
+    let _ = libsodium.sodium_init()
+    let pklen = libsodium.crypto_sign_publickeybytes()
+    let sklen = libsodium.crypto_sign_secretkeybytes()
+    let siglen = libsodium.crypto_sign_bytes()
+    test.assert(pklen == 32)
+    // The Ed25519 secret key carries the public key in its second half.
+    test.assert(sklen == 64)
+    test.assert(siglen == 64)
+    let pk = ptr.alloc(pklen)
+    let sk = ptr.alloc(sklen)
+    test.assert(libsodium.crypto_sign_keypair(pk, sk) == 0)
+    let m = ptr.alloc(ROOM)
+    ptr.write_bytes_buf(m, bytes.from_str(MESSAGE))
+    let sig = ptr.alloc(siglen)
+    let written = ptr.alloc_word()
+    test.assert(libsodium.crypto_sign_detached(sig, written, m, MESSAGE_LEN, sk) == 0)
+    test.assert(ptr.read_word(written) == siglen)
+    test.assert(libsodium.crypto_sign_verify_detached(sig, m, MESSAGE_LEN, pk) == 0)
+    // One byte fewer is a different message, and the signature is not
+    // over it.
+    test.assert(libsodium.crypto_sign_verify_detached(sig, m, MESSAGE_LEN - 1, pk) == -1)
+    ptr.free(written)
+    ptr.free(sig)
+    ptr.free(m)
+    ptr.free(sk)
+    ptr.free(pk)
+
+@test
+fn test_a_password_hashes_and_verifies() [io, ffi]
+    test.case("crypto_pwhash_str, crypto_pwhash_str_verify and the interactive settings")
+    let _ = libsodium.sodium_init()
+    let strbytes = libsodium.crypto_pwhash_strbytes()
+    test.assert(strbytes == 128)
+    let ops = libsodium.crypto_pwhash_opslimit_interactive()
+    let mem = libsodium.crypto_pwhash_memlimit_interactive()
+    test.assert(ops >= 2)
+    // The memory setting is in bytes, and the hash really reserves it.
+    test.assert(mem >= 67108864)
+    let stored = ptr.alloc(strbytes)
+    test.assert(libsodium.crypto_pwhash_str(stored, "correct horse", 13, ops, mem) == 0)
+    // The stored value is text: the algorithm, the parameters, a random
+    // salt and the hash.
+    test.assert(str.len(ptr.read_str(stored)) > 0)
+    test.assert(libsodium.crypto_pwhash_str_verify(stored, "correct horse", 13) == 0)
+    test.assert(libsodium.crypto_pwhash_str_verify(stored, "correct horsf", 13) == -1)
+    // The salt is fresh every time, so the same password stores twice
+    // as two different strings.
+    let again = ptr.alloc(strbytes)
+    test.assert(libsodium.crypto_pwhash_str(again, "correct horse", 13, ops, mem) == 0)
+    test.assert(ptr.read_str(again) != ptr.read_str(stored))
+    ptr.free(again)
+    ptr.free(stored)

@@ -1,0 +1,42 @@
+[package]
+name        = "libsodium-sys"
+version     = "0.1.0"
+description = "Bindings over libsodium, the portable NaCl fork: the initialisation, the random source, the constant-time helpers, guarded memory, BLAKE2b, secret-key and public-key authenticated encryption, XChaCha20-Poly1305, Ed25519 signatures and Argon2id password hashing, one declaration per C entry point."
+license     = "Apache-2.0"
+
+# NOT a `0.0.x` draft.  An interface release is the shape whose every
+# `pub fn` body is a `todo()`, and every `pub fn` here is an `@ffi`
+# declaration with no body at all — `novo pkg publish` reads that as a
+# release with bodies and refuses a `0.0.x` version for it.
+stability   = "experimental"
+
+# `sys`: the layer for a package that binds one C library and decides
+# nothing of its own.  Every `pub fn` below is an `@ffi` declaration of
+# a function in libsodium.
+layer       = "sys"
+
+category    = "bindings"
+
+# The one C library.  `libsodium.so` is what the loader resolves these
+# symbols against; installing this package does not install it.
+wraps       = "libsodium"
+
+tags        = ["ffi", "sodium", "libsodium", "nacl", "crypto", "cryptography", "bindings"]
+repository  = "https://github.com/novolang/libsodium-sys"
+maintainers = ["novo-lang"]
+novo        = ">= 0.8.9"
+
+[docs.pages]
+"README.md" = "The C entry points of libsodium, one novo-lang declaration each"
+
+[dependencies]
+# None.  A binding over one C library depends on no novo-lang package.
+
+# The link flag for the `library = "sodium"` name every declaration in
+# `src/` carries.  `libsodium-dev` installs
+# `/usr/lib/<arch>/pkgconfig/libsodium.pc`, so pkg-config answers
+# `-lsodium` on Debian and Ubuntu.  Without the block the default is
+# `-lsodium`, which is the same flag on a system that put the library
+# somewhere the linker already looks.
+[ffi.sodium]
+pkg_config = "libsodium"
