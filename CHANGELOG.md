@@ -5,6 +5,14 @@ is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 with the pre-1.0 rule that a breaking change bumps the MINOR number.
 
+## 0.1.2 — 2026-09-24
+
+The entry points that answer a C `int` were declared `Int`, so a -1
+arrived as 4294967295 and no failure compared equal to -1; those 28
+answers are now declared `i32`, and the two `uint32_t` answers of the
+random source and the bound `randombytes_uniform` takes are declared
+`u32`.
+
 ## 0.1.1 — 2026-09-24
 
 The documentation and comments in plain prose; no declaration changed.

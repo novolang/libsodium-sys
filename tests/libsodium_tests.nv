@@ -4,10 +4,6 @@
 // libsodium installed and linked.  `novo pkg build` type-checks the
 // declarations without it.  `novo test` runs them and does not.
 //
-// libsodium was not installed on the machines this suite was written
-// and revised on, so the suite has never been linked.  Every assertion
-// is a statement about the documented C API, not an observation.
-//
 // Every test works in memory.  The suite reads and writes no file, and
 // it needs no privileges.  The one call a limit can refuse,
 // `sodium_mlock`, is allowed to answer either way.
@@ -71,12 +67,11 @@ fn test_the_constant_time_helpers_agree_with_the_bytes() [io, ffi]
     libsodium.sodium_memzero(b, 8)
     test.assert(libsodium.sodium_is_zero(a, 8) == 1)
     test.assert(libsodium.sodium_memcmp(a, b, 8) == 0)
-    // The comparison reads the bytes as one little-endian number.  It
-    // answers a C `int`, so the -1 needs the conversion to `i32`.
+    // The comparison reads the bytes as one little-endian number.
     libsodium.sodium_increment(b, 8)
     test.assert(libsodium.sodium_is_zero(b, 8) == 0)
     test.assert(libsodium.sodium_memcmp(a, b, 8) == -1)
-    test.assert((libsodium.sodium_compare(a, b, 8) as i32) == -1)
+    test.assert(libsodium.sodium_compare(a, b, 8) == -1)
     test.assert(libsodium.sodium_compare(b, a, 8) == 1)
     ptr.free(b)
     ptr.free(a)

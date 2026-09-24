@@ -14,7 +14,15 @@
 // Most entry points answer a C `int`, where 0 is success and -1 is
 // failure.  A verification failure, such as a forged ciphertext, a bad
 // signature or a wrong password, is the same -1, and it is the only
-// report.
+// report.  Those answers are declared `i32`, the width of a C `int`,
+// so a -1 arrives as -1.  Declared as `Int`, the 32 bits of a -1 were
+// read as the positive number 4294967295, and every comparison with -1
+// was false.  The two `uint32_t` answers of the random source are
+// declared `u32` for the same reason.
+//
+// A length is a C `size_t` in some entry points and an `unsigned long
+// long` in others.  Both are 64 bits wide on the platforms this package
+// builds for, so every length is an `Int`.
 //
 // The effect rows say where the operating system is reached.  A call
 // that draws from the operating system's random source, or that asks
@@ -37,7 +45,7 @@
 //     return
 // ```
 pub @ffi(library = "sodium", symbol = "sodium_init")
-fn sodium_init() -> Int [io, ffi]
+fn sodium_init() -> i32 [io, ffi]
 
 // Get the version of the library as text.
 //
@@ -60,7 +68,7 @@ fn sodium_version_string() -> Int [ffi]
 // let major = libsodium.sodium_library_version_major()
 // ```
 pub @ffi(library = "sodium", symbol = "sodium_library_version_major")
-fn sodium_library_version_major() -> Int [ffi]
+fn sodium_library_version_major() -> i32 [ffi]
 
 // Get the minor number of the library's own version.
 //
@@ -70,7 +78,7 @@ fn sodium_library_version_major() -> Int [ffi]
 // let minor = libsodium.sodium_library_version_minor()
 // ```
 pub @ffi(library = "sodium", symbol = "sodium_library_version_minor")
-fn sodium_library_version_minor() -> Int [ffi]
+fn sodium_library_version_minor() -> i32 [ffi]
 
 // Ask whether the library is a minimal build.
 //
@@ -82,7 +90,7 @@ fn sodium_library_version_minor() -> Int [ffi]
 // let minimal = libsodium.sodium_library_minimal() == 1
 // ```
 pub @ffi(library = "sodium", symbol = "sodium_library_minimal")
-fn sodium_library_minimal() -> Int [ffi]
+fn sodium_library_minimal() -> i32 [ffi]
 
 // Get an unpredictable 32-bit value.
 //
@@ -93,7 +101,7 @@ fn sodium_library_minimal() -> Int [ffi]
 // let r = libsodium.randombytes_random()
 // ```
 pub @ffi(library = "sodium", symbol = "randombytes_random")
-fn randombytes_random() -> Int [io, ffi]
+fn randombytes_random() -> u32 [io, ffi]
 
 // Get an unpredictable value between 0 and `upper_bound`, excluded.
 //
@@ -104,7 +112,7 @@ fn randombytes_random() -> Int [io, ffi]
 // let die = libsodium.randombytes_uniform(6) + 1
 // ```
 pub @ffi(library = "sodium", symbol = "randombytes_uniform")
-fn randombytes_uniform(upper_bound: Int) -> Int [io, ffi]
+fn randombytes_uniform(upper_bound: u32) -> u32 [io, ffi]
 
 // Fill `size` bytes at `buf` with an unpredictable sequence of bytes.
 //
@@ -163,21 +171,20 @@ fn sodium_memzero(pnt: Int, len: Int) [ffi]
 // let same = libsodium.sodium_memcmp(tag_a, tag_b, 16) == 0
 // ```
 pub @ffi(library = "sodium", symbol = "sodium_memcmp")
-fn sodium_memcmp(b1: Int, b2: Int, len: Int) -> Int [ffi]
+fn sodium_memcmp(b1: Int, b2: Int, len: Int) -> i32 [ffi]
 
 // Compare two `len`-byte little-endian numbers, in constant time for a
 // given length.
 //
 // Answers -1 when the number at `b1` is less, 0 when the two are equal
-// and 1 when it is greater.  The answer is a C `int`, so convert it
-// with `as i32` before comparing it with -1.  One use is refusing a
-// nonce that does not advance, to prevent a replay.
+// and 1 when it is greater.  One use is refusing a nonce that does not
+// advance, to prevent a replay.
 //
 // ```novo ignore
-// let order = libsodium.sodium_compare(nonce_a, nonce_b, 24) as i32
+// let order = libsodium.sodium_compare(nonce_a, nonce_b, 24)
 // ```
 pub @ffi(library = "sodium", symbol = "sodium_compare")
-fn sodium_compare(b1: Int, b2: Int, len: Int) -> Int [ffi]
+fn sodium_compare(b1: Int, b2: Int, len: Int) -> i32 [ffi]
 
 // Ask whether `nlen` bytes at `n` are all zero, in constant time for a
 // given length.
@@ -188,7 +195,7 @@ fn sodium_compare(b1: Int, b2: Int, len: Int) -> Int [ffi]
 // let empty = libsodium.sodium_is_zero(buf, 32) == 1
 // ```
 pub @ffi(library = "sodium", symbol = "sodium_is_zero")
-fn sodium_is_zero(n: Int, nlen: Int) -> Int [ffi]
+fn sodium_is_zero(n: Int, nlen: Int) -> i32 [ffi]
 
 // Add one to the `nlen`-byte little-endian number at `n`, in constant
 // time for a given length.
@@ -233,7 +240,7 @@ fn sodium_bin2hex(hex: Int, hex_maxlen: Int, bin: Int, bin_len: Int) -> Int [ffi
 // ```
 pub @ffi(library = "sodium", symbol = "sodium_hex2bin")
 fn sodium_hex2bin(bin: Int, bin_maxlen: Int, hex: Str, hex_len: Int, ignore: Int, bin_len: Int,
-                  hex_end: Int) -> Int [ffi]
+                  hex_end: Int) -> i32 [ffi]
 
 // Allocate `size` bytes of guarded memory.
 //
@@ -274,7 +281,7 @@ fn sodium_free(p: Int) [io, ffi]
 // let rc = libsodium.sodium_mlock(buf, 32)
 // ```
 pub @ffi(library = "sodium", symbol = "sodium_mlock")
-fn sodium_mlock(addr: Int, len: Int) -> Int [io, ffi]
+fn sodium_mlock(addr: Int, len: Int) -> i32 [io, ffi]
 
 // Zero `len` bytes at `addr`, then unlock them.
 //
@@ -285,7 +292,7 @@ fn sodium_mlock(addr: Int, len: Int) -> Int [io, ffi]
 // let rc = libsodium.sodium_munlock(buf, 32)
 // ```
 pub @ffi(library = "sodium", symbol = "sodium_munlock")
-fn sodium_munlock(addr: Int, len: Int) -> Int [io, ffi]
+fn sodium_munlock(addr: Int, len: Int) -> i32 [io, ffi]
 
 // Hash `inlen` bytes at `input` into `outlen` bytes at `out`.
 //
@@ -301,7 +308,7 @@ fn sodium_munlock(addr: Int, len: Int) -> Int [io, ffi]
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_generichash")
 fn crypto_generichash(out: Int, outlen: Int, input: Int, inlen: Int, key: Int,
-                      keylen: Int) -> Int [ffi]
+                      keylen: Int) -> i32 [ffi]
 
 // Begin a hash computed a piece at a time.
 //
@@ -316,7 +323,7 @@ fn crypto_generichash(out: Int, outlen: Int, input: Int, inlen: Int, key: Int,
 // let rc = libsodium.crypto_generichash_init(state, 0, 0, 32)
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_generichash_init")
-fn crypto_generichash_init(state: Int, key: Int, keylen: Int, outlen: Int) -> Int [ffi]
+fn crypto_generichash_init(state: Int, key: Int, keylen: Int, outlen: Int) -> i32 [ffi]
 
 // Add `inlen` bytes at `input` to a hash in progress.
 //
@@ -327,7 +334,7 @@ fn crypto_generichash_init(state: Int, key: Int, keylen: Int, outlen: Int) -> In
 // let rc = libsodium.crypto_generichash_update(state, piece, piece_len)
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_generichash_update")
-fn crypto_generichash_update(state: Int, input: Int, inlen: Int) -> Int [ffi]
+fn crypto_generichash_update(state: Int, input: Int, inlen: Int) -> i32 [ffi]
 
 // Finish a hash in progress and write `outlen` bytes to `out`.
 //
@@ -339,7 +346,7 @@ fn crypto_generichash_update(state: Int, input: Int, inlen: Int) -> Int [ffi]
 // let rc = libsodium.crypto_generichash_final(state, digest, 32)
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_generichash_final")
-fn crypto_generichash_final(state: Int, out: Int, outlen: Int) -> Int [ffi]
+fn crypto_generichash_final(state: Int, out: Int, outlen: Int) -> i32 [ffi]
 
 // Get the size of the buffer the streaming hash state needs.
 //
@@ -394,7 +401,7 @@ fn crypto_generichash_keygen(k: Int) [io, ffi]
 // let rc = libsodium.crypto_secretbox_easy(c, m, 43, nonce, key)
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_secretbox_easy")
-fn crypto_secretbox_easy(c: Int, m: Int, mlen: Int, n: Int, k: Int) -> Int [ffi]
+fn crypto_secretbox_easy(c: Int, m: Int, mlen: Int, n: Int, k: Int) -> i32 [ffi]
 
 // Verify and decrypt `clen` bytes at `c` under a shared key.
 //
@@ -407,7 +414,7 @@ fn crypto_secretbox_easy(c: Int, m: Int, mlen: Int, n: Int, k: Int) -> Int [ffi]
 // let rc = libsodium.crypto_secretbox_open_easy(back, c, 59, nonce, key)
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_secretbox_open_easy")
-fn crypto_secretbox_open_easy(m: Int, c: Int, clen: Int, n: Int, k: Int) -> Int [ffi]
+fn crypto_secretbox_open_easy(m: Int, c: Int, clen: Int, n: Int, k: Int) -> i32 [ffi]
 
 // Write a random secret-box key of `crypto_secretbox_keybytes()` bytes
 // to `k`.
@@ -466,7 +473,7 @@ fn crypto_secretbox_macbytes() -> Int [ffi]
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_aead_xchacha20poly1305_ietf_encrypt")
 fn crypto_aead_xchacha20poly1305_ietf_encrypt(c: Int, clen_p: Int, m: Int, mlen: Int, ad: Int,
-                                              adlen: Int, nsec: Int, npub: Int, k: Int) -> Int [ffi]
+                                              adlen: Int, nsec: Int, npub: Int, k: Int) -> i32 [ffi]
 
 // Verify and decrypt `clen` bytes at `c` with associated data.
 //
@@ -482,7 +489,7 @@ fn crypto_aead_xchacha20poly1305_ietf_encrypt(c: Int, clen_p: Int, m: Int, mlen:
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_aead_xchacha20poly1305_ietf_decrypt")
 fn crypto_aead_xchacha20poly1305_ietf_decrypt(m: Int, mlen_p: Int, nsec: Int, c: Int, clen: Int,
-                                              ad: Int, adlen: Int, npub: Int, k: Int) -> Int [ffi]
+                                              ad: Int, adlen: Int, npub: Int, k: Int) -> i32 [ffi]
 
 // Write a random XChaCha20-Poly1305 key to `k`.
 //
@@ -532,7 +539,7 @@ fn crypto_aead_xchacha20poly1305_ietf_abytes() -> Int [ffi]
 // let rc = libsodium.crypto_box_keypair(pk, sk)
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_box_keypair")
-fn crypto_box_keypair(pk: Int, sk: Int) -> Int [io, ffi]
+fn crypto_box_keypair(pk: Int, sk: Int) -> i32 [io, ffi]
 
 // Encrypt `mlen` bytes at `m` for a recipient, from a sender.
 //
@@ -547,7 +554,7 @@ fn crypto_box_keypair(pk: Int, sk: Int) -> Int [io, ffi]
 // let rc = libsodium.crypto_box_easy(c, m, 43, nonce, bob_pk, alice_sk)
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_box_easy")
-fn crypto_box_easy(c: Int, m: Int, mlen: Int, n: Int, pk: Int, sk: Int) -> Int [ffi]
+fn crypto_box_easy(c: Int, m: Int, mlen: Int, n: Int, pk: Int, sk: Int) -> i32 [ffi]
 
 // Verify and decrypt `clen` bytes at `c` from a sender.
 //
@@ -559,7 +566,7 @@ fn crypto_box_easy(c: Int, m: Int, mlen: Int, n: Int, pk: Int, sk: Int) -> Int [
 // let rc = libsodium.crypto_box_open_easy(back, c, 59, nonce, alice_pk, bob_sk)
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_box_open_easy")
-fn crypto_box_open_easy(m: Int, c: Int, clen: Int, n: Int, pk: Int, sk: Int) -> Int [ffi]
+fn crypto_box_open_easy(m: Int, c: Int, clen: Int, n: Int, pk: Int, sk: Int) -> i32 [ffi]
 
 // Encrypt `mlen` bytes at `m` for a recipient, anonymously.
 //
@@ -573,7 +580,7 @@ fn crypto_box_open_easy(m: Int, c: Int, clen: Int, n: Int, pk: Int, sk: Int) -> 
 // let rc = libsodium.crypto_box_seal(c, m, 43, bob_pk)
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_box_seal")
-fn crypto_box_seal(c: Int, m: Int, mlen: Int, pk: Int) -> Int [io, ffi]
+fn crypto_box_seal(c: Int, m: Int, mlen: Int, pk: Int) -> i32 [io, ffi]
 
 // Verify and decrypt a sealed box.
 //
@@ -585,7 +592,7 @@ fn crypto_box_seal(c: Int, m: Int, mlen: Int, pk: Int) -> Int [io, ffi]
 // let rc = libsodium.crypto_box_seal_open(back, c, 91, bob_pk, bob_sk)
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_box_seal_open")
-fn crypto_box_seal_open(m: Int, c: Int, clen: Int, pk: Int, sk: Int) -> Int [ffi]
+fn crypto_box_seal_open(m: Int, c: Int, clen: Int, pk: Int, sk: Int) -> i32 [ffi]
 
 // Get the length of an X25519 public key.
 //
@@ -647,7 +654,7 @@ fn crypto_box_sealbytes() -> Int [ffi]
 // let rc = libsodium.crypto_sign_keypair(pk, sk)
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_sign_keypair")
-fn crypto_sign_keypair(pk: Int, sk: Int) -> Int [io, ffi]
+fn crypto_sign_keypair(pk: Int, sk: Int) -> i32 [io, ffi]
 
 // Sign `mlen` bytes at `m`, writing the signature on its own.
 //
@@ -659,7 +666,7 @@ fn crypto_sign_keypair(pk: Int, sk: Int) -> Int [io, ffi]
 // let rc = libsodium.crypto_sign_detached(sig, 0, m, 43, sk)
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_sign_detached")
-fn crypto_sign_detached(sig: Int, siglen_p: Int, m: Int, mlen: Int, sk: Int) -> Int [ffi]
+fn crypto_sign_detached(sig: Int, siglen_p: Int, m: Int, mlen: Int, sk: Int) -> i32 [ffi]
 
 // Verify a signature over `mlen` bytes at `m`.
 //
@@ -671,7 +678,7 @@ fn crypto_sign_detached(sig: Int, siglen_p: Int, m: Int, mlen: Int, sk: Int) -> 
 // let valid = libsodium.crypto_sign_verify_detached(sig, m, 43, pk) == 0
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_sign_verify_detached")
-fn crypto_sign_verify_detached(sig: Int, m: Int, mlen: Int, pk: Int) -> Int [ffi]
+fn crypto_sign_verify_detached(sig: Int, m: Int, mlen: Int, pk: Int) -> i32 [ffi]
 
 // Get the length of an Ed25519 public key.
 //
@@ -724,7 +731,7 @@ fn crypto_sign_bytes() -> Int [ffi]
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_pwhash_str")
 fn crypto_pwhash_str(out: Int, passwd: Str, passwdlen: Int, opslimit: Int,
-                     memlimit: Int) -> Int [io, ffi]
+                     memlimit: Int) -> i32 [io, ffi]
 
 // Check a password against a stored string.
 //
@@ -737,7 +744,7 @@ fn crypto_pwhash_str(out: Int, passwd: Str, passwdlen: Int, opslimit: Int,
 // let ok = libsodium.crypto_pwhash_str_verify(stored, "hunter2", 7) == 0
 // ```
 pub @ffi(library = "sodium", symbol = "crypto_pwhash_str_verify")
-fn crypto_pwhash_str_verify(stored: Int, passwd: Str, passwdlen: Int) -> Int [ffi]
+fn crypto_pwhash_str_verify(stored: Int, passwd: Str, passwdlen: Int) -> i32 [ffi]
 
 // Get the size of the buffer `crypto_pwhash_str` writes into.
 //

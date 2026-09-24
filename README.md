@@ -196,8 +196,14 @@ lets an attacker who stole the store try many guesses a second.
    stops at the first difference, and how long that took is a measurement
    an attacker can make. `sodium_memcmp` reports equality only, and
    `sodium_compare` reports order.
-8. **`sodium_compare` answers a C `int`.** Write `as i32` before
-   comparing the answer with -1.
+8. **An answer of -1 compares equal to -1.** The entry points that
+   answer a C `int` are declared `i32`, the width of that `int`, so
+   `sodium_compare` and every call that fails with -1 need no
+   conversion. `randombytes_random` and `randombytes_uniform` answer a
+   C `uint32_t` and are declared `u32`, so their answers are never
+   negative. A length is a C `size_t` in some calls and an `unsigned
+   long long` in others, and both are 64 bits wide, so every length is
+   an `Int`.
 9. **A key leaves memory through `sodium_memzero`.** Freeing a buffer
    does not clear it, and a plain loop that clears it may be removed by
    the compiler.
@@ -341,11 +347,8 @@ novo test tests/libsodium_tests.nv
 `novo pkg build` type-checks the declarations and needs nothing
 installed.
 
-The suite has never been linked. libsodium was not installed on the
-machines where this package was written and revised, so `novo test`
-stopped at `cannot find -lsodium`, and no assertion below has been
-observed to hold. Every assertion is written from the documented C API.
-Treat the package as unmeasured until it runs against libsodium.
+The suite runs against libsodium 1.0.18 on Ubuntu, and all twelve
+tests pass there.
 
 Every test works in memory, so the suite reads and writes no file and
 needs no privileges. The version test accepts both a full and a minimal

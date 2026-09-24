@@ -1,6 +1,6 @@
 [package]
 name        = "libsodium-sys"
-version     = "0.1.1"
+version     = "0.1.2"
 description = "Bindings over libsodium, the portable NaCl fork: the initialisation, the random source, the constant-time helpers, guarded memory, BLAKE2b, secret-key and public-key authenticated encryption, XChaCha20-Poly1305, Ed25519 signatures and Argon2id password hashing, one declaration per C entry point."
 license     = "Apache-2.0"
 
