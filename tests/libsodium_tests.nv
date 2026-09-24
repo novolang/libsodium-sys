@@ -1,16 +1,16 @@
-// API tests for the libsodium bindings.
+// The tests over the entry points of the libsodium bindings.
 //
 // Every test below calls into the C library, so the suite needs
 // libsodium installed and linked.  `novo pkg build` type-checks the
-// declarations without it; `novo test` runs them and does not.
+// declarations without it.  `novo test` runs them and does not.
 //
-// libsodium was not installed on the machine these tests were written
-// on, so the suite has never been linked.  Read every assertion as a
-// statement about the documented C API rather than as an observation.
+// libsodium was not installed on the machines this suite was written
+// and revised on, so the suite has never been linked.  Every assertion
+// is a statement about the documented C API, not an observation.
 //
 // Every test works in memory.  The suite reads and writes no file, and
-// it needs no privileges: the one call that can be refused by a limit,
-// `sodium_mlock`, is asserted to answer either way.
+// it needs no privileges.  The one call a limit can refuse,
+// `sodium_mlock`, is allowed to answer either way.
 
 use std.test
 use libsodium
@@ -25,15 +25,15 @@ const ROOM: Int = 256
 @test
 fn test_the_library_initialises_and_reports_its_version() [io, ffi]
     test.case("sodium_init, sodium_version_string and the version numbers")
-    // 0 is the first successful call and 1 is a repeat; only -1 is a
-    // failure, and after it nothing else may be called.
+    // 0 is the first successful call and 1 is a repeat.  Only -1 is a
+    // failure, and after it the library is not safe to use.
     let rc = libsodium.sodium_init()
     test.assert(rc == 0 or rc == 1)
     test.assert(str.len(ptr.read_str(libsodium.sodium_version_string())) > 0)
     test.assert(libsodium.sodium_library_version_major() > 0)
     test.assert(libsodium.sodium_library_version_minor() >= 0)
-    // A full build and a minimal build both answer this package's
-    // entry points; the flag says which one is installed.
+    // A full build and a minimal build both have this package's entry
+    // points, and the flag says which one is installed.
     let minimal = libsodium.sodium_library_minimal()
     test.assert(minimal == 0 or minimal == 1)
 
@@ -71,12 +71,12 @@ fn test_the_constant_time_helpers_agree_with_the_bytes() [io, ffi]
     libsodium.sodium_memzero(b, 8)
     test.assert(libsodium.sodium_is_zero(a, 8) == 1)
     test.assert(libsodium.sodium_memcmp(a, b, 8) == 0)
-    // The comparison reads the bytes as one little-endian number, and
-    // it answers a C `int`, so the -1 needs the narrowing.
+    // The comparison reads the bytes as one little-endian number.  It
+    // answers a C `int`, so the -1 needs the conversion to `i32`.
     libsodium.sodium_increment(b, 8)
     test.assert(libsodium.sodium_is_zero(b, 8) == 0)
     test.assert(libsodium.sodium_memcmp(a, b, 8) == -1)
-    test.assert(libsodium.sodium_compare(a, b, 8) as i32 == -1)
+    test.assert((libsodium.sodium_compare(a, b, 8) as i32) == -1)
     test.assert(libsodium.sodium_compare(b, a, 8) == 1)
     ptr.free(b)
     ptr.free(a)
@@ -144,8 +144,8 @@ fn test_a_message_hashes_in_one_call_and_a_piece_at_a_time() [io, ffi]
     let one_shot = ptr.alloc(outlen)
     test.assert(libsodium.crypto_generichash(one_shot, outlen, input, MESSAGE_LEN,
                                              key, keylen) == 0)
-    // The state is a buffer whose size the library reports; nothing
-    // reads inside it.
+    // The state is a buffer whose size the library reports, and
+    // nothing reads inside it.
     let statelen = libsodium.crypto_generichash_statebytes()
     test.assert(statelen > 0)
     let state = ptr.alloc(statelen)
@@ -362,12 +362,12 @@ fn test_a_password_hashes_and_verifies() [io, ffi]
     let ops = libsodium.crypto_pwhash_opslimit_interactive()
     let mem = libsodium.crypto_pwhash_memlimit_interactive()
     test.assert(ops >= 2)
-    // The memory setting is in bytes, and the hash really reserves it.
+    // The memory setting is in bytes, and the hash allocates that much.
     test.assert(mem >= 67108864)
     let stored = ptr.alloc(strbytes)
     test.assert(libsodium.crypto_pwhash_str(stored, "correct horse", 13, ops, mem) == 0)
-    // The stored value is text: the algorithm, the parameters, a random
-    // salt and the hash.
+    // The stored value is text holding the algorithm, the parameters, a
+    // random salt and the hash.
     test.assert(str.len(ptr.read_str(stored)) > 0)
     test.assert(libsodium.crypto_pwhash_str_verify(stored, "correct horse", 13) == 0)
     test.assert(libsodium.crypto_pwhash_str_verify(stored, "correct horsf", 13) == -1)

@@ -1,290 +1,469 @@
 // The C entry points of libsodium, one novo-lang declaration each.
 //
-// A pointer is an `Int`: every buffer libsodium reads or writes is an
+// A pointer is an `Int`.  Every buffer libsodium reads or writes is an
 // address the caller reserved with `ptr.alloc`, and zero is the null
-// pointer.  libsodium passes nothing by value and returns nothing by
-// value, so the whole surface below is expressible.
+// pointer.  libsodium passes and returns no structure by value, so
+// every entry point it has can be declared this way.
 //
-// A key, a nonce and a tag are fixed-length byte buffers.  The lengths
-// are `#define`s in the C header and also functions, and only the
-// functions are symbols a binding can resolve, so the `*_bytes`,
-// `*_keybytes`, `*_noncebytes` and `*_macbytes` calls are here and a
-// caller asks them rather than writing a number.
+// A key, a nonce and a tag are fixed-length byte buffers.  The C header
+// defines each length as a macro and also as a function, and only the
+// function is a symbol a binding can resolve.  The `*bytes` calls are
+// therefore declared, and a caller asks them rather than writing a
+// number.
 //
-// Most entry points answer a C `int`: 0 is success and -1 is failure.
-// A verification failure — a forged ciphertext, a bad signature, a
-// wrong password — is the same -1, and it is the only report.
+// Most entry points answer a C `int`, where 0 is success and -1 is
+// failure.  A verification failure, such as a forged ciphertext, a bad
+// signature or a wrong password, is the same -1, and it is the only
+// report.
 //
-// The effect rows say where the operating system is touched.  A call
-// that draws from the kernel's random source, or that asks the kernel
-// for a page it will not swap, is `[io, ffi]`.  Everything that only
-// computes over buffers the caller supplied is `[ffi]`.
+// The effect rows say where the operating system is reached.  A call
+// that draws from the operating system's random source, or that asks
+// the kernel to lock memory, is `[io, ffi]`.  A call that only computes
+// over buffers the caller supplied is `[ffi]`.
+//
+// The examples in these comments are fenced `novo ignore`, so `novo
+// doc` does not compile them.  A compiled example links against
+// libsodium, and the link fails where that library is not installed.
 
 // Initialise the library.
 //
-// Call this once, before any other entry point, and from one thread.
-// Answers 0 on the first successful call, 1 when the library was
-// already initialised, and -1 when initialisation failed, after which
-// no other entry point may be called.
+// Call it before any other entry point.  It is safe to call more than
+// once and from several threads, and later calls have no effect.
+// Answers 0 on success, 1 when the library was already initialised,
+// and -1 on failure, after which the library is not safe to use.
+//
+// ```novo ignore
+// if libsodium.sodium_init() == -1
+//     return
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_init")
 fn sodium_init() -> Int [io, ffi]
 
 // Get the version of the library as text.
 //
 // The answer is the address of a static string such as `"1.0.18"`.
+// Read it with `ptr.read_str` and do not free it.
+//
+// ```novo ignore
+// println(ptr.read_str(libsodium.sodium_version_string()))
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_version_string")
 fn sodium_version_string() -> Int [ffi]
 
-// Get the major number of the library's binary interface version.
+// Get the major number of the library's own version.
 //
-// This is the SONAME number, not the first part of the version string.
+// It is `SODIUM_LIBRARY_VERSION_MAJOR`, 10 for libsodium 1.0.18.  It is
+// neither the first part of the version string nor the number in the
+// shared library's file name.
+//
+// ```novo ignore
+// let major = libsodium.sodium_library_version_major()
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_library_version_major")
 fn sodium_library_version_major() -> Int [ffi]
 
-// Get the minor number of the library's binary interface version.
+// Get the minor number of the library's own version.
+//
+// It is `SODIUM_LIBRARY_VERSION_MINOR`.
+//
+// ```novo ignore
+// let minor = libsodium.sodium_library_version_minor()
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_library_version_minor")
 fn sodium_library_version_minor() -> Int [ffi]
 
-// Ask whether this is a minimal build of the library.
+// Ask whether the library is a minimal build.
 //
-// Answers 1 for a build made with `--enable-minimal`, which leaves out
-// the deprecated and rarely used constructions.  Every entry point in
-// this package is in a minimal build.
+// Answers 1 for a build made with `--enable-minimal`, which keeps only
+// the high-level API, and 0 otherwise.  The entry points in this
+// package are part of the high-level API.
+//
+// ```novo ignore
+// let minimal = libsodium.sodium_library_minimal() == 1
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_library_minimal")
 fn sodium_library_minimal() -> Int [ffi]
 
 // Get an unpredictable 32-bit value.
 //
-// The value is drawn from the operating system's random source and is
-// uniform over the whole 32-bit range.  It arrives as an unsigned
-// number widened to 64 bits, so it is never negative.
+// The value is between 0 and 0xffffffff inclusive.  It arrives as an
+// unsigned number widened to 64 bits, so it is never negative.
+//
+// ```novo ignore
+// let r = libsodium.randombytes_random()
+// ```
 pub @ffi(library = "sodium", symbol = "randombytes_random")
 fn randombytes_random() -> Int [io, ffi]
 
-// Get an unpredictable value below `upper_bound`.
+// Get an unpredictable value between 0 and `upper_bound`, excluded.
 //
-// The result is uniform over `0 .. upper_bound - 1`, without the bias
-// that taking a remainder introduces.  An `upper_bound` of 0 or 1
-// answers 0.
+// The distribution is uniform, without the bias that taking a remainder
+// introduces.  An `upper_bound` below 2 answers 0.
+//
+// ```novo ignore
+// let die = libsodium.randombytes_uniform(6) + 1
+// ```
 pub @ffi(library = "sodium", symbol = "randombytes_uniform")
 fn randombytes_uniform(upper_bound: Int) -> Int [io, ffi]
 
-// Fill `size` bytes at `buf` with unpredictable data.
+// Fill `size` bytes at `buf` with an unpredictable sequence of bytes.
 //
-// This is the call that generates a nonce or a salt.  It draws from
-// the operating system's random source.
+// This is the call that generates a nonce or a salt.
+//
+// ```novo ignore
+// libsodium.randombytes_buf(nonce, 24)
+// ```
 pub @ffi(library = "sodium", symbol = "randombytes_buf")
 fn randombytes_buf(buf: Int, size: Int) [io, ffi]
 
-// Fill `size` bytes at `buf` with data derived from a seed.
+// Fill `size` bytes at `buf` with a sequence derived from a seed.
 //
 // `seed` is the address of `randombytes_seedbytes()` bytes.  The same
-// seed always produces the same bytes, so this is for a reproducible
-// test and never for a key.  It touches no random source.
+// seed always produces the same bytes, which is mainly useful for
+// tests.  It never generates a key or a nonce.  The call reaches no
+// random source.
+//
+// ```novo ignore
+// libsodium.randombytes_buf_deterministic(buf, 64, seed)
+// ```
 pub @ffi(library = "sodium", symbol = "randombytes_buf_deterministic")
 fn randombytes_buf_deterministic(buf: Int, size: Int, seed: Int) [ffi]
 
 // Get the length of the seed `randombytes_buf_deterministic` takes.
+//
+// It is `randombytes_SEEDBYTES`, 32.
+//
+// ```novo ignore
+// let seed = ptr.alloc(libsodium.randombytes_seedbytes())
+// ```
 pub @ffi(library = "sodium", symbol = "randombytes_seedbytes")
 fn randombytes_seedbytes() -> Int [ffi]
 
 // Overwrite `len` bytes at `pnt` with zeros.
 //
-// The compiler is not allowed to remove this write, which is what
-// separates it from clearing a buffer by hand.  It is how a key leaves
+// A compiler may remove a plain loop that clears memory it considers
+// dead, and it does not remove this call.  It is how a key leaves
 // memory.
+//
+// ```novo ignore
+// libsodium.sodium_memzero(key, 32)
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_memzero")
 fn sodium_memzero(pnt: Int, len: Int) [ffi]
 
 // Compare `len` bytes at `b1` with `len` bytes at `b2`, in constant
-// time.
+// time for a given length.
 //
 // Answers 0 when the two are equal and -1 when they are not.  The time
 // the comparison takes does not depend on where the first difference
-// is, so it is the only correct way to check a tag or an
-// authenticator.  It reports equality, not order.
+// is, which makes it the call for checking a secret value.  It reports
+// equality, not order.
+//
+// ```novo ignore
+// let same = libsodium.sodium_memcmp(tag_a, tag_b, 16) == 0
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_memcmp")
 fn sodium_memcmp(b1: Int, b2: Int, len: Int) -> Int [ffi]
 
-// Order `len` bytes at `b1` against `len` bytes at `b2`, in constant
-// time.
+// Compare two `len`-byte little-endian numbers, in constant time for a
+// given length.
 //
-// The bytes are read as one little-endian number.  Answers -1, 0 or 1,
-// and the answer is a C `int`, so write `as i32` before comparing it
-// with -1.
+// Answers -1 when the number at `b1` is less, 0 when the two are equal
+// and 1 when it is greater.  The answer is a C `int`, so convert it
+// with `as i32` before comparing it with -1.  One use is refusing a
+// nonce that does not advance, to prevent a replay.
+//
+// ```novo ignore
+// let order = libsodium.sodium_compare(nonce_a, nonce_b, 24) as i32
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_compare")
 fn sodium_compare(b1: Int, b2: Int, len: Int) -> Int [ffi]
 
-// Ask whether `nlen` bytes at `n` are all zero, in constant time.
+// Ask whether `nlen` bytes at `n` are all zero, in constant time for a
+// given length.
 //
 // Answers 1 when they are and 0 when they are not.
+//
+// ```novo ignore
+// let empty = libsodium.sodium_is_zero(buf, 32) == 1
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_is_zero")
 fn sodium_is_zero(n: Int, nlen: Int) -> Int [ffi]
 
 // Add one to the `nlen`-byte little-endian number at `n`, in constant
-// time.
+// time for a given length.
 //
-// This is how a nonce advances between messages under one key. The
-// addition wraps at the end of the buffer and carries no error.
+// This is how a nonce advances between messages under one key.  The
+// addition wraps at the end of the buffer, and the call reports nothing.
+//
+// ```novo ignore
+// libsodium.sodium_increment(nonce, 24)
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_increment")
 fn sodium_increment(n: Int, nlen: Int) [ffi]
 
 // Write `bin_len` bytes at `bin` as lower-case hexadecimal text.
 //
-// `hex_maxlen` must be at least `bin_len * 2 + 1`, because the text is
-// terminated with a zero byte.  The conversion is constant-time.
-// Answers the address of `hex`.
+// `hex_maxlen` must be at least `bin_len * 2 + 1`, because the text
+// ends with a zero byte.  The conversion is constant time for a given
+// size.  Answers the address `hex`.
+//
+// ```novo ignore
+// let _ = libsodium.sodium_bin2hex(hex, 65, digest, 32)
+// println(ptr.read_str(hex))
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_bin2hex")
 fn sodium_bin2hex(hex: Int, hex_maxlen: Int, bin: Int, bin_len: Int) -> Int [ffi]
 
 // Read hexadecimal text as bytes.
 //
-// `bin` is a buffer of `bin_maxlen` bytes and `hex` is the text.
-// `ignore` is the address of a zero-terminated string of characters to
-// skip between pairs, such as `": "`, or 0 to allow none.  `bin_len`
-// is the address of an eight-byte slot that receives how many bytes
-// were written, and `hex_end` the address of a slot that receives
-// where parsing stopped; either may be 0.  Answers 0 on success and -1
-// when the text does not fit or is not hexadecimal.
+// `bin` is a buffer of `bin_maxlen` bytes, and `hex` is `hex_len` bytes
+// of text.  `ignore` is the address of a zero-terminated string of
+// characters to skip, such as `": "`, or 0 to skip none.  `bin_len` is
+// the address of an eight-byte slot that receives the number of bytes
+// written, or 0.  `hex_end` is the address of a slot that receives the
+// address of the first character not parsed, or 0.  Answers 0 on
+// success.  Answers -1 when the bytes do not fit in `bin_maxlen`, and
+// when the text is not fully parsed and `hex_end` is 0.  With a
+// `hex_end` slot, parsing stops at the first character that is not
+// hexadecimal, and the call answers 0.
+//
+// ```novo ignore
+// let rc = libsodium.sodium_hex2bin(bin, 32, text, 64, 0, len_slot, 0)
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_hex2bin")
 fn sodium_hex2bin(bin: Int, bin_maxlen: Int, hex: Str, hex_len: Int, ignore: Int, bin_len: Int,
                   hex_end: Int) -> Int [ffi]
 
 // Allocate `size` bytes of guarded memory.
 //
-// The block is placed at the end of a page, with an unreadable page
-// after it and a canary before it, and the whole block is locked
-// against being written to swap.  Answers the address, or 0 when the
-// allocation failed.  Release it with `sodium_free` and never with
-// `ptr.free`.
+// The block is placed at the end of a page and followed by a guard page
+// that cannot be read or written.  A canary before the block detects a
+// write that runs into it, and the block is locked so that it is not
+// swapped out.  The allocation takes three or four pages beyond the
+// block, so it is not a general-purpose allocator.  Answers the
+// address, or 0 when the allocation failed.  Release the block with
+// `sodium_free` and never with `ptr.free`.
+//
+// ```novo ignore
+// let key = libsodium.sodium_malloc(32)
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_malloc")
 fn sodium_malloc(size: Int) -> Int [io, ffi]
 
 // Release a block `sodium_malloc` returned.
 //
-// The bytes are zeroed before the pages go back, and the canary is
-// checked: a block written past its end terminates the process here
-// rather than returning.  Releasing the null address does nothing.
+// The block is unlocked and filled with zeros before its pages are
+// released.  The canary is checked first, and a damaged canary
+// terminates the process.  Passing 0 does nothing.
+//
+// ```novo ignore
+// libsodium.sodium_free(key)
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_free")
 fn sodium_free(p: Int) [io, ffi]
 
-// Lock `len` bytes at `addr` into physical memory.
+// Lock at least `len` bytes at `addr` into physical memory.
 //
-// Locked pages are not written to swap and are excluded from a core
-// dump.  Answers 0 on success and -1 when the operating system refused,
-// which a per-process limit makes ordinary.
+// Locked pages are not swapped to disk.  Where the operating system
+// supports it, they are also left out of a core dump.  Answers 0 on
+// success and -1 when the operating system refused, which a
+// per-process limit on locked memory makes ordinary.
+//
+// ```novo ignore
+// let rc = libsodium.sodium_mlock(buf, 32)
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_mlock")
 fn sodium_mlock(addr: Int, len: Int) -> Int [io, ffi]
 
-// Unlock `len` bytes at `addr`, zeroing them first.
+// Zero `len` bytes at `addr`, then unlock them.
 //
+// Call it when memory locked with `sodium_mlock` is no longer used.
 // Answers 0 on success and -1 on failure.
+//
+// ```novo ignore
+// let rc = libsodium.sodium_munlock(buf, 32)
+// ```
 pub @ffi(library = "sodium", symbol = "sodium_munlock")
 fn sodium_munlock(addr: Int, len: Int) -> Int [io, ffi]
 
-// Hash `inlen` bytes at `in` into `outlen` bytes at `out`.
+// Hash `inlen` bytes at `input` into `outlen` bytes at `out`.
 //
-// This is BLAKE2b.  `outlen` is between `crypto_generichash_bytes_min`
-// and `crypto_generichash_bytes_max`, and the length is part of the
-// hash: a 16-byte digest is not the first 16 bytes of a 32-byte
-// digest.  `key` and `keylen` are a key of up to
-// `crypto_generichash_keybytes()` bytes, which turns the hash into a
-// message authentication code; pass 0 and 0 for an unkeyed hash.
-// Answers 0 on success and -1 on a bad length.
+// The hash is BLAKE2b.  `outlen` is between 16 and 64, and 32 is the
+// recommended length.  The length is part of the hash, so a 16-byte
+// digest is not the first 16 bytes of a 32-byte digest.  `key` and
+// `keylen` are a key of 16 to 64 bytes, which makes the hash a message
+// authentication code (MAC), or 0 and 0 for an unkeyed hash.  Answers
+// 0 on success and -1 on a length out of range.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_generichash(digest, 32, msg, 43, 0, 0)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_generichash")
 fn crypto_generichash(out: Int, outlen: Int, input: Int, inlen: Int, key: Int,
                       keylen: Int) -> Int [ffi]
 
 // Begin a hash computed a piece at a time.
 //
-// `state` is the address of a buffer of `crypto_generichash_statebytes()`
-// bytes the caller reserved and keeps until the final call.  `key`,
-// `keylen` and `outlen` are those of `crypto_generichash`, and `outlen`
-// must match the one given to `crypto_generichash_final`.
+// `state` is the address of `crypto_generichash_statebytes()` bytes the
+// caller reserved and keeps until the final call.  The C header
+// declares the state with 64-byte alignment, and a buffer from
+// `ptr.alloc` is not promised that alignment.  `key`, `keylen` and
+// `outlen` are those of `crypto_generichash`.  Answers 0 on success
+// and -1 on a length out of range.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_generichash_init(state, 0, 0, 32)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_generichash_init")
 fn crypto_generichash_init(state: Int, key: Int, keylen: Int, outlen: Int) -> Int [ffi]
 
-// Add `inlen` bytes at `in` to a hash in progress.
+// Add `inlen` bytes at `input` to a hash in progress.
 //
-// The pieces may be any size, and the digest depends only on the bytes
-// and not on where they were split.
+// The pieces may be any size.  The digest depends only on the bytes,
+// not on where they were split.  Answers 0.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_generichash_update(state, piece, piece_len)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_generichash_update")
 fn crypto_generichash_update(state: Int, input: Int, inlen: Int) -> Int [ffi]
 
 // Finish a hash in progress and write `outlen` bytes to `out`.
 //
-// `outlen` must be the length given to `crypto_generichash_init`. The
-// state may not be used again afterwards.
+// `outlen` is the length given to `crypto_generichash_init`.  The state
+// is not used again afterwards.  Answers 0 on success and -1 on
+// failure.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_generichash_final(state, digest, 32)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_generichash_final")
 fn crypto_generichash_final(state: Int, out: Int, outlen: Int) -> Int [ffi]
 
 // Get the size of the buffer the streaming hash state needs.
 //
-// The state is a structure whose fields have no promised offsets. This
-// call is what a caller reserves, and nothing reads inside it.
+// The state is a structure with no documented fields.  A caller
+// reserves this many bytes and does not read inside them.
+//
+// ```novo ignore
+// let state = ptr.alloc(libsodium.crypto_generichash_statebytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_generichash_statebytes")
 fn crypto_generichash_statebytes() -> Int [ffi]
 
-// Get the digest length BLAKE2b produces when no other is asked for.
+// Get the recommended BLAKE2b digest length.
+//
+// It is `crypto_generichash_BYTES`, 32.
+//
+// ```novo ignore
+// let len = libsodium.crypto_generichash_bytes()
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_generichash_bytes")
 fn crypto_generichash_bytes() -> Int [ffi]
 
-// Get the key length BLAKE2b uses when no other is asked for.
+// Get the recommended BLAKE2b key length.
+//
+// It is `crypto_generichash_KEYBYTES`, 32.
+//
+// ```novo ignore
+// let key = ptr.alloc(libsodium.crypto_generichash_keybytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_generichash_keybytes")
 fn crypto_generichash_keybytes() -> Int [ffi]
 
 // Write a random BLAKE2b key of `crypto_generichash_keybytes()` bytes
 // to `k`.
+//
+// ```novo ignore
+// libsodium.crypto_generichash_keygen(key)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_generichash_keygen")
 fn crypto_generichash_keygen(k: Int) [io, ffi]
 
 // Encrypt and authenticate `mlen` bytes at `m` under a shared key.
 //
-// `c` is a buffer of `mlen + crypto_secretbox_macbytes()` bytes: the
-// authentication tag goes in front of the ciphertext.  `n` is a nonce
-// of `crypto_secretbox_noncebytes()` bytes and `k` a key of
-// `crypto_secretbox_keybytes()` bytes.  A nonce may never repeat under
+// The construction is XSalsa20-Poly1305.  `c` is a buffer of `mlen +
+// crypto_secretbox_macbytes()` bytes, and the authentication tag goes
+// in front of the ciphertext.  `n` is a nonce of
+// `crypto_secretbox_noncebytes()` bytes and `k` a key of
+// `crypto_secretbox_keybytes()` bytes.  A nonce must never repeat under
 // one key.  Answers 0.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_secretbox_easy(c, m, 43, nonce, key)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_secretbox_easy")
 fn crypto_secretbox_easy(c: Int, m: Int, mlen: Int, n: Int, k: Int) -> Int [ffi]
 
 // Verify and decrypt `clen` bytes at `c` under a shared key.
 //
 // `m` is a buffer of `clen - crypto_secretbox_macbytes()` bytes.
-// Answers 0 when the tag verifies, and -1 when it does not, which
-// means the message was altered or the key or nonce is wrong.  Nothing
-// in `m` may be used after a -1.
+// Answers 0 when the tag verifies.  Answers -1 when it does not, which
+// means the ciphertext was altered or the key or nonce is wrong.  Do
+// not use anything in `m` after a -1.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_secretbox_open_easy(back, c, 59, nonce, key)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_secretbox_open_easy")
 fn crypto_secretbox_open_easy(m: Int, c: Int, clen: Int, n: Int, k: Int) -> Int [ffi]
 
-// Write a random shared key of `crypto_secretbox_keybytes()` bytes
+// Write a random secret-box key of `crypto_secretbox_keybytes()` bytes
 // to `k`.
+//
+// ```novo ignore
+// libsodium.crypto_secretbox_keygen(key)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_secretbox_keygen")
 fn crypto_secretbox_keygen(k: Int) [io, ffi]
 
-// Get the length of a secret-key encryption key.
+// Get the length of a secret-box key.
+//
+// It is `crypto_secretbox_KEYBYTES`, 32.
+//
+// ```novo ignore
+// let key = ptr.alloc(libsodium.crypto_secretbox_keybytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_secretbox_keybytes")
 fn crypto_secretbox_keybytes() -> Int [ffi]
 
-// Get the length of a secret-key encryption nonce.
+// Get the length of a secret-box nonce.
+//
+// It is `crypto_secretbox_NONCEBYTES`, 24.
+//
+// ```novo ignore
+// let nonce = ptr.alloc(libsodium.crypto_secretbox_noncebytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_secretbox_noncebytes")
 fn crypto_secretbox_noncebytes() -> Int [ffi]
 
 // Get the length of the authentication tag a secret box carries.
+//
+// It is `crypto_secretbox_MACBYTES`, 16.
+//
+// ```novo ignore
+// let c = ptr.alloc(43 + libsodium.crypto_secretbox_macbytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_secretbox_macbytes")
 fn crypto_secretbox_macbytes() -> Int [ffi]
 
 // Encrypt `mlen` bytes at `m` with associated data, under a shared key.
 //
-// This is XChaCha20-Poly1305 with the IETF construction.  `c` is a
-// buffer of `mlen + crypto_aead_xchacha20poly1305_ietf_abytes()` bytes
-// and `clen_p` the address of an eight-byte slot that receives how
-// many were written, or 0.  `ad` and `adlen` are data that is
-// authenticated but not encrypted — a header, a message number — and
-// may be 0 and 0.  `nsec` is unused and must be 0.  `npub` is a
-// 24-byte nonce and `k` a 32-byte key.  Answers 0.
+// The construction is XChaCha20-Poly1305 in its IETF form.  `c` is a
+// buffer of `mlen + crypto_aead_xchacha20poly1305_ietf_abytes()` bytes.
+// `clen_p` is the address of an eight-byte slot that receives the
+// number of bytes written, or 0.  `ad` and `adlen` are data that is
+// authenticated and not encrypted, such as a header or a message
+// number, or 0 and 0 for none.  `nsec` is not used and is 0.  `npub`
+// is a 24-byte nonce and `k` a 32-byte key.  Answers 0.
 //
 // The nonce is long enough to choose at random for every message.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_aead_xchacha20poly1305_ietf_encrypt(c, clen_slot, m, 43, ad, 8,
+//                                                              0, nonce, key)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_aead_xchacha20poly1305_ietf_encrypt")
 fn crypto_aead_xchacha20poly1305_ietf_encrypt(c: Int, clen_p: Int, m: Int, mlen: Int, ad: Int,
                                               adlen: Int, nsec: Int, npub: Int, k: Int) -> Int [ffi]
@@ -292,143 +471,257 @@ fn crypto_aead_xchacha20poly1305_ietf_encrypt(c: Int, clen_p: Int, m: Int, mlen:
 // Verify and decrypt `clen` bytes at `c` with associated data.
 //
 // `m` is a buffer of `clen - crypto_aead_xchacha20poly1305_ietf_abytes()`
-// bytes and `mlen_p` the address of a slot that receives how many were
-// written, or 0.  `nsec` is unused and must be 0.  `ad` and `adlen`
-// must be exactly what the encryption was given.  Answers 0 when the
-// tag verifies and -1 when it does not.
+// bytes, and `mlen_p` is the address of a slot that receives the number
+// of bytes written, or 0.  `nsec` is not used and is 0.  `ad` and
+// `adlen` must be exactly what the encryption was given.  Answers 0
+// when the tag verifies and -1 when it does not.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_aead_xchacha20poly1305_ietf_decrypt(back, mlen_slot, 0, c, 59,
+//                                                              ad, 8, nonce, key)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_aead_xchacha20poly1305_ietf_decrypt")
 fn crypto_aead_xchacha20poly1305_ietf_decrypt(m: Int, mlen_p: Int, nsec: Int, c: Int, clen: Int,
                                               ad: Int, adlen: Int, npub: Int, k: Int) -> Int [ffi]
 
-// Write a random key for XChaCha20-Poly1305 to `k`.
+// Write a random XChaCha20-Poly1305 key to `k`.
+//
+// ```novo ignore
+// libsodium.crypto_aead_xchacha20poly1305_ietf_keygen(key)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_aead_xchacha20poly1305_ietf_keygen")
 fn crypto_aead_xchacha20poly1305_ietf_keygen(k: Int) [io, ffi]
 
 // Get the length of an XChaCha20-Poly1305 key.
+//
+// It is 32.
+//
+// ```novo ignore
+// let key = ptr.alloc(libsodium.crypto_aead_xchacha20poly1305_ietf_keybytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_aead_xchacha20poly1305_ietf_keybytes")
 fn crypto_aead_xchacha20poly1305_ietf_keybytes() -> Int [ffi]
 
 // Get the length of an XChaCha20-Poly1305 nonce.
+//
+// It is 24.
+//
+// ```novo ignore
+// let nonce = ptr.alloc(libsodium.crypto_aead_xchacha20poly1305_ietf_npubbytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_aead_xchacha20poly1305_ietf_npubbytes")
 fn crypto_aead_xchacha20poly1305_ietf_npubbytes() -> Int [ffi]
 
 // Get the number of bytes XChaCha20-Poly1305 adds to a message.
+//
+// It is the length of the tag, 16.
+//
+// ```novo ignore
+// let c = ptr.alloc(43 + libsodium.crypto_aead_xchacha20poly1305_ietf_abytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_aead_xchacha20poly1305_ietf_abytes")
 fn crypto_aead_xchacha20poly1305_ietf_abytes() -> Int [ffi]
 
 // Generate an X25519 key pair.
 //
 // `pk` is a buffer of `crypto_box_publickeybytes()` bytes and `sk` one
-// of `crypto_box_secretkeybytes()` bytes.  The secret key is drawn
-// from the operating system's random source.  Answers 0.
+// of `crypto_box_secretkeybytes()` bytes.  The secret key is random.
+// Answers 0.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_box_keypair(pk, sk)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_box_keypair")
 fn crypto_box_keypair(pk: Int, sk: Int) -> Int [io, ffi]
 
 // Encrypt `mlen` bytes at `m` for a recipient, from a sender.
 //
-// `c` is a buffer of `mlen + crypto_box_macbytes()` bytes, `n` a nonce
-// of `crypto_box_noncebytes()` bytes, `pk` the recipient's public key
-// and `sk` the sender's secret key.  The recipient learns that the
-// sender wrote it.  Answers 0, or -1 when the public key is not a
-// valid point.
+// The construction is X25519 key exchange with XSalsa20-Poly1305.  `c`
+// is a buffer of `mlen + crypto_box_macbytes()` bytes, `n` a nonce of
+// `crypto_box_noncebytes()` bytes, `pk` the recipient's public key and
+// `sk` the sender's secret key.  The recipient learns that the sender
+// wrote the message.  Answers 0 on success, and -1 on failure, such as
+// a public key that gives an all-zero shared secret.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_box_easy(c, m, 43, nonce, bob_pk, alice_sk)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_box_easy")
 fn crypto_box_easy(c: Int, m: Int, mlen: Int, n: Int, pk: Int, sk: Int) -> Int [ffi]
 
 // Verify and decrypt `clen` bytes at `c` from a sender.
 //
-// `pk` is the sender's public key and `sk` the recipient's secret key.
-// Answers 0 when the tag verifies and -1 when it does not.
+// `m` is a buffer of `clen - crypto_box_macbytes()` bytes.  `pk` is the
+// sender's public key and `sk` the recipient's secret key.  Answers 0
+// when the tag verifies and -1 when it does not.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_box_open_easy(back, c, 59, nonce, alice_pk, bob_sk)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_box_open_easy")
 fn crypto_box_open_easy(m: Int, c: Int, clen: Int, n: Int, pk: Int, sk: Int) -> Int [ffi]
 
 // Encrypt `mlen` bytes at `m` for a recipient, anonymously.
 //
-// `c` is a buffer of `mlen + crypto_box_sealbytes()` bytes and `pk`
-// the recipient's public key.  A fresh key pair is generated for this
-// one message and its secret half is destroyed, so the recipient
-// cannot tell who sent it and the sender cannot decrypt it again.
-// Answers 0.
+// `c` is a buffer of `mlen + crypto_box_sealbytes()` bytes and `pk` the
+// recipient's public key.  A new key pair is generated for this one
+// message, and its secret half is erased afterwards.  The recipient
+// cannot tell who sent the message, and the sender cannot decrypt it.
+// Answers 0 on success and -1 on failure.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_box_seal(c, m, 43, bob_pk)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_box_seal")
 fn crypto_box_seal(c: Int, m: Int, mlen: Int, pk: Int) -> Int [io, ffi]
 
-// Verify and decrypt an anonymous message.
+// Verify and decrypt a sealed box.
 //
 // `m` is a buffer of `clen - crypto_box_sealbytes()` bytes, and both
 // halves of the recipient's key pair are needed.  Answers 0 on success
 // and -1 on failure.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_box_seal_open(back, c, 91, bob_pk, bob_sk)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_box_seal_open")
 fn crypto_box_seal_open(m: Int, c: Int, clen: Int, pk: Int, sk: Int) -> Int [ffi]
 
 // Get the length of an X25519 public key.
+//
+// It is `crypto_box_PUBLICKEYBYTES`, 32.
+//
+// ```novo ignore
+// let pk = ptr.alloc(libsodium.crypto_box_publickeybytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_box_publickeybytes")
 fn crypto_box_publickeybytes() -> Int [ffi]
 
 // Get the length of an X25519 secret key.
+//
+// It is `crypto_box_SECRETKEYBYTES`, 32.
+//
+// ```novo ignore
+// let sk = ptr.alloc(libsodium.crypto_box_secretkeybytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_box_secretkeybytes")
 fn crypto_box_secretkeybytes() -> Int [ffi]
 
-// Get the length of a public-key encryption nonce.
+// Get the length of a box nonce.
+//
+// It is `crypto_box_NONCEBYTES`, 24.
+//
+// ```novo ignore
+// let nonce = ptr.alloc(libsodium.crypto_box_noncebytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_box_noncebytes")
 fn crypto_box_noncebytes() -> Int [ffi]
 
 // Get the length of the authentication tag a box carries.
+//
+// It is `crypto_box_MACBYTES`, 16.
+//
+// ```novo ignore
+// let c = ptr.alloc(43 + libsodium.crypto_box_macbytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_box_macbytes")
 fn crypto_box_macbytes() -> Int [ffi]
 
 // Get the number of bytes a sealed box adds to a message.
 //
-// It is the ephemeral public key plus the tag.
+// It is the ephemeral public key plus the tag, 48.
+//
+// ```novo ignore
+// let c = ptr.alloc(43 + libsodium.crypto_box_sealbytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_box_sealbytes")
 fn crypto_box_sealbytes() -> Int [ffi]
 
 // Generate an Ed25519 key pair.
 //
 // `pk` is a buffer of `crypto_sign_publickeybytes()` bytes and `sk` one
-// of `crypto_sign_secretkeybytes()` bytes.  Answers 0.
+// of `crypto_sign_secretkeybytes()` bytes.  The key pair is random.
+// Answers 0.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_sign_keypair(pk, sk)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_sign_keypair")
 fn crypto_sign_keypair(pk: Int, sk: Int) -> Int [io, ffi]
 
 // Sign `mlen` bytes at `m`, writing the signature on its own.
 //
-// `sig` is a buffer of `crypto_sign_bytes()` bytes and `siglen_p` the
+// `sig` is a buffer of `crypto_sign_bytes()` bytes.  `siglen_p` is the
 // address of an eight-byte slot that receives the signature's length,
 // or 0.  `sk` is the signer's secret key.  Answers 0.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_sign_detached(sig, 0, m, 43, sk)
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_sign_detached")
 fn crypto_sign_detached(sig: Int, siglen_p: Int, m: Int, mlen: Int, sk: Int) -> Int [ffi]
 
 // Verify a signature over `mlen` bytes at `m`.
 //
 // `pk` is the signer's public key.  Answers 0 when the signature is
-// the signer's and -1 when it is not.  This is the only report: a
+// valid and -1 when it is not.  The answer is the only report, so a
 // caller that ignores it has verified nothing.
+//
+// ```novo ignore
+// let valid = libsodium.crypto_sign_verify_detached(sig, m, 43, pk) == 0
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_sign_verify_detached")
 fn crypto_sign_verify_detached(sig: Int, m: Int, mlen: Int, pk: Int) -> Int [ffi]
 
 // Get the length of an Ed25519 public key.
+//
+// It is `crypto_sign_PUBLICKEYBYTES`, 32.
+//
+// ```novo ignore
+// let pk = ptr.alloc(libsodium.crypto_sign_publickeybytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_sign_publickeybytes")
 fn crypto_sign_publickeybytes() -> Int [ffi]
 
 // Get the length of an Ed25519 secret key.
 //
-// The secret key holds the public key in its second half, so a signer
-// needs to keep only this one buffer.
+// It is `crypto_sign_SECRETKEYBYTES`, 64.  The secret key is the
+// 32-byte seed followed by the 32-byte public key, so a signer keeps
+// one buffer.
+//
+// ```novo ignore
+// let sk = ptr.alloc(libsodium.crypto_sign_secretkeybytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_sign_secretkeybytes")
 fn crypto_sign_secretkeybytes() -> Int [ffi]
 
 // Get the length of an Ed25519 signature.
+//
+// It is `crypto_sign_BYTES`, 64.
+//
+// ```novo ignore
+// let sig = ptr.alloc(libsodium.crypto_sign_bytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_sign_bytes")
 fn crypto_sign_bytes() -> Int [ffi]
 
 // Hash a password into a storable string.
 //
-// `out` is a buffer of `crypto_pwhash_strbytes()` bytes, which
-// receives zero-terminated text holding the algorithm, the parameters,
-// a random salt and the hash.  `passwd` and `passwdlen` are the
-// password.  `opslimit` and `memlimit` are the work to do and the
-// memory to use; `crypto_pwhash_opslimit_interactive()` and
-// `crypto_pwhash_memlimit_interactive()` are the pair for a password a
-// person types.  Answers 0, or -1 when the memory could not be
-// reserved.
+// The algorithm is Argon2id.  `out` is a buffer of
+// `crypto_pwhash_strbytes()` bytes, which receives zero-terminated
+// ASCII text holding the algorithm, the parameters, a random salt and
+// the hash.  `passwd` and `passwdlen` are the password.  `opslimit` is
+// the work to do and `memlimit` the memory to use, in bytes.
+// `crypto_pwhash_opslimit_interactive()` and
+// `crypto_pwhash_memlimit_interactive()` are the pair for interactive
+// use, such as a login.  Answers 0, or -1 when the computation did not
+// complete, usually because the memory could not be allocated.
+//
+// ```novo ignore
+// let rc = libsodium.crypto_pwhash_str(stored, "hunter2", 7,
+//                                      libsodium.crypto_pwhash_opslimit_interactive(),
+//                                      libsodium.crypto_pwhash_memlimit_interactive())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_pwhash_str")
 fn crypto_pwhash_str(out: Int, passwd: Str, passwdlen: Int, opslimit: Int,
                      memlimit: Int) -> Int [io, ffi]
@@ -437,22 +730,42 @@ fn crypto_pwhash_str(out: Int, passwd: Str, passwdlen: Int, opslimit: Int,
 //
 // `stored` is the address of the text `crypto_pwhash_str` wrote.
 // Answers 0 when the password matches and -1 when it does not.  The
-// parameters come out of the stored string, so a string written with
-// heavier settings is still checkable.
+// parameters are read from the stored string, so a string written with
+// other settings can still be checked.
+//
+// ```novo ignore
+// let ok = libsodium.crypto_pwhash_str_verify(stored, "hunter2", 7) == 0
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_pwhash_str_verify")
 fn crypto_pwhash_str_verify(stored: Int, passwd: Str, passwdlen: Int) -> Int [ffi]
 
 // Get the size of the buffer `crypto_pwhash_str` writes into.
+//
+// It is `crypto_pwhash_STRBYTES`, 128.
+//
+// ```novo ignore
+// let stored = ptr.alloc(libsodium.crypto_pwhash_strbytes())
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_pwhash_strbytes")
 fn crypto_pwhash_strbytes() -> Int [ffi]
 
-// Get the work setting for a password a person types.
+// Get the operations limit for interactive use.
+//
+// It is `crypto_pwhash_OPSLIMIT_INTERACTIVE`, 2.
+//
+// ```novo ignore
+// let ops = libsodium.crypto_pwhash_opslimit_interactive()
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_pwhash_opslimit_interactive")
 fn crypto_pwhash_opslimit_interactive() -> Int [ffi]
 
-// Get the memory setting for a password a person types.
+// Get the memory limit for interactive use, in bytes.
 //
-// The figure is in bytes, and the call that uses it really does
-// reserve that much.
+// It is `crypto_pwhash_MEMLIMIT_INTERACTIVE`, 67108864, which is 64
+// MiB, and `crypto_pwhash_str` allocates that much.
+//
+// ```novo ignore
+// let mem = libsodium.crypto_pwhash_memlimit_interactive()
+// ```
 pub @ffi(library = "sodium", symbol = "crypto_pwhash_memlimit_interactive")
 fn crypto_pwhash_memlimit_interactive() -> Int [ffi]

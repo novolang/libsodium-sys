@@ -1,33 +1,32 @@
 # libsodium-sys
 
-libsodium is a software library for encryption, decryption, signatures
-and password hashing. It is a portable, packageable fork of NaCl, with
-one compatible interface and no configuration: for each job it offers
-one construction, already chosen. The library and its interface are
-documented in the
+libsodium is a modern, easy-to-use software library for encryption,
+decryption, signatures, password hashing and more. It is a portable,
+cross-compilable, installable and packageable fork of NaCl, with a
+compatible but extended API. For each job its high-level API offers one
+construction, already chosen. The library is documented in the
 [libsodium documentation](https://doc.libsodium.org/). This package
-declares sixty-two of that library's entry points to novo-lang, one
-declaration each.
+declares sixty-two of its entry points to novo-lang, one declaration
+each.
 
-**Status: a binding, not a port.** Every function in this package is a
-declaration of a function in libsodium. The package contains no logic
-of its own, and it does nothing without the C library installed. The
-sixty-two entry points cover initialisation, the random source, the
-constant-time helpers, guarded memory, hashing, secret-key and
-public-key authenticated encryption, signatures and password hashing;
-the section "What is not included" says what a program still cannot do
-with them alone.
+Every function here is a declaration of a function in libsodium. The
+package contains no logic of its own, and it does nothing without the C
+library installed. The sixty-two entry points cover initialisation, the
+random source, the constant-time helpers, guarded memory, hashing,
+secret-key and public-key authenticated encryption, signatures and
+password hashing. The section "What is not included" says what a
+program cannot do with them alone.
 
 ## What it is
 
 A **key** is a fixed-length block of secret bytes. Every construction
-below states its key length, and a key of the wrong length is not a
-weak key but a programming error the library refuses.
+below states its key length. The library reads exactly that many bytes
+from the key's address, so a shorter buffer is a programming error.
 
 A **nonce** is a number used once. It is public, it goes beside the
 ciphertext, and it may never repeat under one key. Repeating it does
-not weaken the key; it reveals the difference between the two messages
-encrypted under it.
+not reveal the key. It can reveal the two messages encrypted under it,
+and with a Poly1305 tag it lets an attacker forge messages.
 
 An **authentication tag**, also called a MAC, is the short value that
 proves a ciphertext was not altered. Every encryption call here
@@ -37,12 +36,12 @@ fails the check writes nothing a caller may use.
 **Secret-key authenticated encryption** is for two parties that already
 share a key. **Public-key authenticated encryption** is for two parties
 that each hold a key pair and know each other's public half. A
-**sealed box** is the anonymous form: the sender needs only the
+**sealed box** is the anonymous form. The sender needs only the
 recipient's public key, and the recipient cannot tell who wrote it.
 
 A **signature** proves that the holder of a secret key produced a
 message, to anyone holding the matching public key. It is not
-encryption: a signed message is readable by everyone.
+encryption, and a signed message is readable by everyone.
 
 **Password hashing** turns a password into a value that can be stored.
 It is deliberately slow and deliberately memory-hungry, so that a
@@ -112,9 +111,8 @@ fn main() [io, ffi]
     ptr.free(key)
 ```
 
-The example is fenced as an illustration rather than a compiled block
-because `novo doc` compiles the blocks in documentation comments and
-not the ones in this file. The same calls are in
+The example is not compiled, because it links against libsodium and the
+link fails where that library is not installed. The same calls are in
 `tests/libsodium_tests.nv`.
 
 ## What the package contains
@@ -130,9 +128,9 @@ The ten groups and their sizes:
 | Initialisation and version | 5 | Starts the library and reports which build is installed. |
 | The random source | 5 | Draws unpredictable bytes and numbers, and a reproducible stream from a seed. |
 | Constant-time helpers | 7 | Compares, clears, counts and converts secret bytes without leaking them through timing. |
-| Guarded memory | 4 | Allocates a block the operating system will not swap, and locks and unlocks ordinary pages. |
+| Guarded memory | 4 | Allocates a block between guard pages that is not swapped out, and locks and unlocks ordinary pages. |
 | Generic hashing | 8 | BLAKE2b, in one call and a piece at a time, keyed or unkeyed. |
-| Secret-key encryption | 6 | Encrypts and authenticates under a key both parties hold. |
+| Secret-key encryption | 6 | XSalsa20-Poly1305, encrypting and authenticating under a key both parties hold. |
 | Authenticated encryption with associated data | 6 | XChaCha20-Poly1305, with a header that is authenticated and not encrypted. |
 | Public-key encryption | 10 | X25519 key pairs, boxes between two parties, and anonymous sealed boxes. |
 | Signatures | 6 | Ed25519 key pairs, detached signatures and their verification. |
@@ -144,8 +142,8 @@ The ten groups and their sizes:
 It is the shortest way to encrypt, and it has no place for a header.
 
 `crypto_aead_xchacha20poly1305_ietf_encrypt` is the same job with
-associated data: a header, a sequence number or a record identifier
-that travels in the clear and is still covered by the tag. Its nonce is
+associated data, such as a header, a sequence number or a record
+identifier, that travels in the clear and is still covered by the tag. Its nonce is
 24 bytes, which is long enough to choose at random for every message
 rather than counting.
 
@@ -161,41 +159,42 @@ message again afterwards.
 may alter. Use it where the point is provenance rather than secrecy.
 
 `crypto_generichash` is a hash, not an encryption. With a key it is a
-message authentication code; without one it is a checksum over data
+message authentication code. Without one it is a fingerprint of data
 that is not secret.
 
 `crypto_pwhash_str` is for a password, and only for a password.
-Hashing a password with `crypto_generichash` is fast, and fast is the
-whole problem.
+Hashing a password with `crypto_generichash` is fast, and a fast hash
+lets an attacker who stole the store try many guesses a second.
 
 ## The rules a user needs
 
-1. **`sodium_init` comes first.** Call it once, from one thread, before
-   any other entry point. It answers 0 the first time, 1 when the
-   library was already initialised, and -1 on failure, after which no
-   other entry point may be called.
+1. **`sodium_init` comes first.** Call it before any other entry
+   point. It is safe to call more than once and from several threads.
+   It answers 0 the first time, 1 when the library was already
+   initialised, and -1 on failure, after which the library is not safe
+   to use.
 2. **A pointer is an `Int`, and zero is null.** Every key, nonce,
    message and tag is an address the caller reserved with `ptr.alloc`,
    wrote with `ptr.write_bytes_buf` and read back with
    `ptr.read_bytes_n`.
 3. **The lengths are calls, not numbers.** The C header spells them as
    `#define`s, which a binding cannot resolve, so every length is asked
-   for: `crypto_secretbox_keybytes()`, `crypto_box_noncebytes()`,
-   `crypto_sign_bytes()`. The current values are in the table below, and
-   asking is still the correct way to reserve a buffer.
+   for, such as `crypto_secretbox_keybytes()`, `crypto_box_noncebytes()`
+   and `crypto_sign_bytes()`. The current values are in the table
+   below, and asking is still the correct way to reserve a buffer.
 4. **A failure is -1 and it is the whole report.** There is no error
    code and no error string. A -1 from a decryption or a verification
    means the data was altered, or the key, nonce or associated data is
-   wrong; which of those it is cannot be learned, by design.
+   wrong. Which of those it is cannot be learned.
 5. **Nothing in the destination buffer may be used after a -1.** The
-   library may have written plaintext there before the tag failed to
-   verify. Treat it as unwritten.
+   documentation promises nothing about its contents. Treat it as
+   unwritten.
 6. **A nonce may never repeat under one key.** Draw a 24-byte nonce
    with `randombytes_buf` for every message, or count with
    `sodium_increment` and never restart the count.
 7. **Compare secrets with `sodium_memcmp`.** Comparing byte by byte
    stops at the first difference, and how long that took is a measurement
-   an attacker can make. `sodium_memcmp` reports equality only;
+   an attacker can make. `sodium_memcmp` reports equality only, and
    `sodium_compare` reports order.
 8. **`sodium_compare` answers a C `int`.** Write `as i32` before
    comparing the answer with -1.
@@ -224,43 +223,48 @@ whole problem.
     | Ed25519 public key | 32 | `crypto_sign_publickeybytes` |
     | Ed25519 secret key | 64 | `crypto_sign_secretkeybytes` |
     | Ed25519 signature | 64 | `crypto_sign_bytes` |
-    | BLAKE2b digest | 32 | `crypto_generichash_bytes` |
-    | BLAKE2b key | 32 | `crypto_generichash_keybytes` |
+    | BLAKE2b digest, recommended | 32 | `crypto_generichash_bytes` |
+    | BLAKE2b key, recommended | 32 | `crypto_generichash_keybytes` |
     | stored password hash | 128 | `crypto_pwhash_strbytes` |
     | deterministic seed | 32 | `randombytes_seedbytes` |
 
-13. **The digest length is part of a BLAKE2b hash.** A 16-byte digest
-    is not the first 16 bytes of a 32-byte digest, and the length given
-    to `crypto_generichash_init` must be the one given to
+13. **The digest length is part of a BLAKE2b hash.** A digest is 16 to
+    64 bytes and a key 16 to 64 bytes. A 16-byte digest is not the first
+    16 bytes of a 32-byte digest, and the length given to
+    `crypto_generichash_init` must be the one given to
     `crypto_generichash_final`.
 14. **The streaming hash state is a buffer of an asked-for size.**
     Reserve `crypto_generichash_statebytes()` bytes and pass the
-    address. The fields inside it have no promised offsets and nothing
-    outside the library reads them.
+    address. The fields inside it are not documented, and nothing
+    outside the library reads them. The C header declares the state
+    with 64-byte alignment, and a buffer from `ptr.alloc` is not
+    promised that alignment.
 15. **`randombytes_buf_deterministic` is not a random source.** The
     same seed always gives the same bytes. It is for a reproducible
     test, and never for a key or a nonce.
 16. **An Ed25519 secret key carries its public key.** The 64-byte
-    secret key holds the 32-byte public key in its second half, so a
-    signer keeps one buffer.
+    secret key is the 32-byte seed followed by the 32-byte public key,
+    so a signer keeps one buffer.
 17. **Associated data is not stored anywhere.** The decryption must be
     handed exactly the bytes the encryption was handed, from wherever
     the program kept them, or the tag fails.
 
 ## Timing behaviour
 
-The constructions in this package are constant-time with respect to
-secret data: the number of operations and the sequence of memory
-accesses do not depend on a key, a plaintext or a password. That is a
-property of libsodium and not of this package, which adds nothing.
+The encryption, signature and hashing constructions in this package are
+constant-time with respect to secret data. The number of operations and
+the sequence of memory accesses do not depend on a key or a plaintext.
+That is a property of libsodium, and this package adds nothing to it.
 
 `sodium_memcmp`, `sodium_compare`, `sodium_is_zero`, `sodium_increment`
 and `sodium_bin2hex` are the constant-time forms of operations whose
 obvious implementation is not constant-time. Use them for anything
 secret.
 
-`crypto_pwhash_str` is deliberately slow, and how long it takes depends
-on the operations and memory limits and not on the password.
+`crypto_pwhash_str` is deliberately slow, and how long it takes is set
+by the operations and memory limits. Argon2id reads memory at addresses
+that do not depend on the password in the first half of its first pass,
+and at addresses that do for the rest. RFC 9106 section 3.4.1.3.
 
 `sodium_hex2bin` is constant-time for the conversion itself. Whether
 the text parsed at all is reported, and that report depends on the
@@ -275,46 +279,59 @@ input, which is a public fact about text that came from outside.
 - **`sodium_set_misuse_handler`.** It takes a C function pointer.
 - **The secret stream**, `crypto_secretstream_xchacha20poly1305_*`.
   It encrypts a sequence of messages under one key with rekeying and a
-  final tag. Its state has a `statebytes` accessor, so it is
-  expressible; it is left out of the first release.
+  final tag. Its state has a `statebytes` accessor, so it can be
+  declared. It is left out of this release.
 - **Key derivation**, `crypto_kdf_*`, and key exchange, `crypto_kx_*`.
-  Left out of the first release.
+  They are left out of this release.
 - **The raw `crypto_pwhash`.** It derives a key of a chosen length from
   a password and a caller-supplied salt. `crypto_pwhash_str`, which
   stores a password, is here.
 - **Base64**, `sodium_bin2base64` and `sodium_base642bin`, and the
-  padding helpers `sodium_pad` and `sodium_unpad`. Left out of the first
-  release; hexadecimal is here.
+  padding helpers `sodium_pad` and `sodium_unpad`. They are left out of
+  this release, and hexadecimal is here.
 - **`sodium_mprotect_noaccess`, `sodium_mprotect_readonly` and
   `sodium_mprotect_readwrite`.** They change the protection of a
-  `sodium_malloc` block. Left out of the first release.
+  `sodium_malloc` block. They are left out of this release.
 - **The detached forms** of `crypto_secretbox` and `crypto_box`, which
   keep the tag in a separate buffer. The combined forms are here.
-- **The older constructions** kept for NaCl compatibility:
-  `crypto_stream`, `crypto_onetimeauth`, `crypto_scalarmult`,
-  `crypto_hash_sha256` and `crypto_hash_sha512`.
+- **The lower-level constructions**, `crypto_stream`,
+  `crypto_onetimeauth`, `crypto_scalarmult`, `crypto_hash_sha256` and
+  `crypto_hash_sha512`. The high-level constructions above are built on
+  them.
 - **The `_easy` signature form**, `crypto_sign` and `crypto_sign_open`,
   which copy the message and the signature into one buffer. The
   detached form is here.
 
-Nothing in this package is excluded because of the by-value rule.
-libsodium passes every buffer by address and returns no structure, so
-its whole surface is expressible; the omissions above are choices of
-scope, and the two at the top are the C function pointers.
+libsodium passes every buffer by address and returns no structure by
+value, so every entry point it has could be declared here. The first
+two omissions above take C function pointers, which the novo-lang
+foreign function interface cannot pass. The rest are left out of this
+release.
 
 ## Related packages
 
-`crypto-nv` is the novo-lang cryptography package, with no C library.
-It implements the same primitives natively. Choose `crypto-nv` when the
-program must build for a microcontroller or for WebAssembly, or when a
-C toolchain is not wanted. Choose this package when the program must
-use the audited reference implementation, or must interoperate with
-another program that already uses libsodium.
+[crypto-nv](https://novo-lang.org/packages/crypto-nv) holds SHA-256,
+SHA-512, SHA-1, MD5 and HMAC in novo-lang, with no C library. It has
+none of the constructions this package declares.
+
+The same primitives written in novo-lang are
+[blake2-nv](https://novo-lang.org/packages/blake2-nv),
+[chacha20-nv](https://novo-lang.org/packages/chacha20-nv),
+[x25519-nv](https://novo-lang.org/packages/x25519-nv),
+[ed25519-nv](https://novo-lang.org/packages/ed25519-nv) and
+[argon2-nv](https://novo-lang.org/packages/argon2-nv). All five are
+published as interface releases. Every function in them is declared and
+none has a body yet, so a program that must encrypt, sign or hash a
+password today uses this package. When their functions have bodies,
+they are the choice for a program that must build for a microcontroller
+or for WebAssembly, or does without a C toolchain. This package is the
+choice for a program that must use libsodium itself, or interoperate
+with a program that does.
 
 ## Tests
 
-`tests/libsodium_tests.nv` holds twelve tests written against the
-signatures. They call the C library, so `novo test` needs libsodium
+`tests/libsodium_tests.nv` holds twelve tests over the sixty-two entry
+points. They call the C library, so `novo test` needs libsodium
 installed and linkable:
 
 ```
@@ -324,12 +341,11 @@ novo test tests/libsodium_tests.nv
 `novo pkg build` type-checks the declarations and needs nothing
 installed.
 
-**Unverified: the suite has never linked on the staging machine.**
-libsodium was not installed where this package was written, so `novo
-test` stopped at `cannot find -lsodium` and no assertion below has ever
-been observed to hold. Every assertion is written from the documented C
-API. Treat the package as unmeasured until someone runs it against a
-real libsodium.
+The suite has never been linked. libsodium was not installed on the
+machines where this package was written and revised, so `novo test`
+stopped at `cannot find -lsodium`, and no assertion below has been
+observed to hold. Every assertion is written from the documented C API.
+Treat the package as unmeasured until it runs against libsodium.
 
 Every test works in memory, so the suite reads and writes no file and
 needs no privileges. The version test accepts both a full and a minimal
@@ -340,31 +356,13 @@ The guarded-memory test accepts both answers from `sodium_mlock`,
 because a process limit may refuse it. The hash test asserts that the
 one-shot and the streaming digest match and that a 16-byte digest is not
 a prefix of the 32-byte one. Each encryption test round-trips the
-message and then asserts a failure: an altered byte for the secret box,
-a changed associated-data length for the authenticated encryption, and
-the wrong sender's public key for the box. The sealed-box test asserts
+message and then asserts a failure. The secret box is given an altered
+byte, the authenticated encryption a changed associated-data length,
+and the box the wrong sender's public key. The sealed-box test asserts
 that the same message sealed twice gives two different ciphertexts. The
 signature test asserts that a signature over a shorter message does not
 verify. The password test asserts that the same password stored twice
 gives two different strings.
-
-## Implementation status
-
-| Group | State |
-| --- | --- |
-| Initialisation and version | Complete. |
-| The random source | Complete. |
-| Constant-time helpers | Complete for hexadecimal; base64 and the padding helpers are absent. |
-| Guarded memory | Complete for allocation and locking; the protection changes are absent. |
-| Generic hashing | Complete, one-shot and streaming. |
-| Secret-key encryption | Complete for the combined form; the detached form is absent. |
-| Authenticated encryption with associated data | Complete for XChaCha20-Poly1305. |
-| Public-key encryption | Complete for boxes and sealed boxes; the detached form is absent. |
-| Signatures | Complete for the detached form; the combined form is absent. |
-| Password hashing | Complete for the stored string; the raw key derivation is absent. |
-| The secret stream | Absent. Left out of the first release. |
-| Key derivation and key exchange | Absent. Left out of the first release. |
-| The replaceable random source | Absent. It takes C function pointers. |
 
 ## Licence
 
